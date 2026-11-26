@@ -3,7 +3,7 @@ import {
   Scissors, Calendar, Clock, MapPin, Phone, CheckCircle2,
   XCircle, User, ExternalLink, LogIn
 } from 'lucide-react';
-import { apiRequest } from '../services/api';
+import { apiRequest, filterActiveBarbers, filterActiveServices } from '../services/api';
 
 export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
   const [services, setServices] = useState([]);
@@ -39,8 +39,8 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
           apiRequest('/services'),
           apiRequest('/barbers'),
         ]);
-        setServices(srvs);
-        setBarbers(brbs);
+        setServices(filterActiveServices(srvs));
+        setBarbers(filterActiveBarbers(brbs));
       } catch (err) {
         console.error('Error cargando servicios/barberos:', err);
       }
@@ -161,15 +161,36 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
 
   const openPanel = () => (onOpenAdmin || onGoAdmin)?.();
 
+  const LEGACY_SERVICE_IMAGES = [
+    'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1585747860715-2ba37e788b70?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1647140655214-e4a2d914971f?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1517832606299-7ae9b720a186?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1703792685152-d13e206924d8?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1600603405959-6d623e92445c?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1630827020718-3433092696e7?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1706307121034-81829ec35a0d?auto=format&fit=crop&w=800&q=80',
+  ];
+
   const getServiceImage = (serviceName) => {
     const name = String(serviceName || '').toLowerCase();
     if (name.includes('barba')) {
-      return 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=800&q=80';
+      return '/corte-barba.png';
     }
     if (name.includes('niño') || name.includes('nino')) {
-      return 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&w=800&q=80';
+      return '/corte-nino.png';
     }
-    return 'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?auto=format&fit=crop&w=800&q=80';
+    return '/corte-clasico.jpeg';
+  };
+
+  const resolveServiceImage = (service) => {
+    const url = String(service?.imageUrl || '').trim();
+    if (LEGACY_SERVICE_IMAGES.includes(url) || url.startsWith('http://') || url.startsWith('https://')) {
+      return getServiceImage(service?.name);
+    }
+    return getServiceImage(service?.name);
   };
 
   return (
@@ -349,7 +370,7 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
                         className={`overflow-hidden rounded-2xl border text-left transition cursor-pointer ${String(selectedServiceId) === String(service.id) ? 'border-amber-500 bg-amber-500/5' : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700'}`}
                       >
                         <img
-                          src={service.imageUrl || getServiceImage(service.name)}
+                          src={resolveServiceImage(service)}
                           alt={service.name}
                           className="h-32 w-full object-cover object-top opacity-90"
                           onError={(event) => { event.currentTarget.src = getServiceImage(service.name); }}

@@ -39,8 +39,10 @@ const createSale = async (req, res) => {
     const sale = await prisma.$transaction(async (tx) => {
       let total = 0;
       const preparedItems = [];
-      const barber = await tx.barber.findUnique({ where: { id: parseInt(barberId) } });
-      if (!barber) throw new Error('Barbero no encontrado.');
+      const barber = await tx.barber.findFirst({
+        where: { id: parseInt(barberId), active: true, user: { active: true } },
+      });
+      if (!barber) throw new Error('Barbero no encontrado o inactivo.');
 
       for (const item of items) {
         const quantity = parseInt(item.quantity) || 1;

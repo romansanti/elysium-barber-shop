@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const { PrismaClient } = require('@prisma/client');
+const { syncCatalogDefaults } = require('./src/services/catalogSync.service');
 require('dotenv').config();
 
 const app = express();
@@ -35,4 +37,13 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+  const syncPrisma = new PrismaClient();
+  syncCatalogDefaults(syncPrisma, { force: false, createMissing: false })
+    .then((result) => {
+      if (result.updatedServices.length || result.deactivatedBarbers.length) {
+        console.log('Catálogo sincronizado al iniciar:', JSON.stringify(result));
+      }
+    })
+    .catch((error) => console.warn('Aviso: no se pudo sincronizar el catálogo al iniciar:', error.message))
+    .finally(() => syncPrisma.$disconnect());
 });

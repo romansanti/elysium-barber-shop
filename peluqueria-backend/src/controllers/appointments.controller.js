@@ -59,7 +59,11 @@ const createAppointment = async (req, res) => {
     const chooseAny = !barberValue || String(barberValue).toUpperCase() === 'ANY';
 
     if (chooseAny) {
-      const barbers = await prisma.barber.findMany({ where: { active: true }, include: { schedules: true } });
+      const barbers = await prisma.barber.findMany({
+        where: { active: true, user: { active: true } },
+        include: { schedules: true },
+        orderBy: { id: 'asc' },
+      });
       for (const barber of barbers) {
         const schedules = await prisma.barberSchedule.findMany({
           where: { barberId: barber.id, weekday, active: true },
@@ -75,6 +79,11 @@ const createAppointment = async (req, res) => {
       if (!barberId) return res.status(409).json({ error: 'No hay un barbero disponible en ese horario.' });
     } else {
       barberId = parseInt(barberValue);
+      const activeBarber = await prisma.barber.findFirst({
+        where: { id: barberId, active: true, user: { active: true } },
+      });
+      if (!activeBarber) return res.status(404).json({ error: 'El barbero seleccionado no está disponible.' });
+
       const schedules = await prisma.barberSchedule.findMany({
         where: { barberId, weekday, active: true },
       });
@@ -128,8 +137,15 @@ const getAvailability = async (req, res) => {
       return res.status(400).json({ error: 'Faltan parámetros: barberId, serviceId o date' });
     }
 
-    const service = await prisma.service.findUnique({ where: { id: parseInt(serviceId) } });
+    const service = await prisma.service.findFirst({ where: { id: parseInt(serviceId), active: true } });
     if (!service) return res.status(404).json({ error: 'Servicio no encontrado' });
+
+    const barber = await prisma.barber.findFirst({
+      where: { id: parseInt(barberId), active: true, user: { active: true } },
+    });
+    if (!barber) {
+      return res.json({ message: 'Barbero no disponible.', availableSlots: [] });
+    }
 
     const dateObj = new Date(date);
     const weekday = dateObj.getUTCDay();

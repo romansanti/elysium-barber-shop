@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const { findServiceConfig, syncCatalogDefaults } = require('../services/catalogSync.service');
 const prisma = new PrismaClient();
 
 const getServices = async (req, res) => {
@@ -16,17 +17,18 @@ const getServices = async (req, res) => {
 
 const createService = async (req, res) => {
   try {
-    const { name, description, price, durationMinutes, imageUrl } = req.body;
+    const { name, description, price, durationMinutes } = req.body;
     if (!name || price === undefined || !durationMinutes) {
       return res.status(400).json({ error: 'Nombre, precio y duración son obligatorios.' });
     }
+    const defaultConfig = findServiceConfig(name);
     const service = await prisma.service.create({
       data: {
         name,
         description: description || '',
         price: Number(price),
         durationMinutes: parseInt(durationMinutes),
-        imageUrl: imageUrl ? String(imageUrl).trim() : null,
+        imageUrl: defaultConfig?.imageUrl || null,
       }
     });
     res.status(201).json(service);
@@ -36,18 +38,33 @@ const createService = async (req, res) => {
   }
 };
 
+const syncDefaultServices = async (req, res) => {
+  try {
+    const result = await syncCatalogDefaults(prisma, { force: true, createMissing: false });
+    res.json({ message: 'Catálogo sincronizado correctamente', ...result });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al sincronizar los servicios por defecto.' });
+  }
+};
+
 const updateService = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, price, durationMinutes, active, isActive, imageUrl } = req.body;
+    const { name, description, price, durationMinutes, active, isActive } = req.body;
+    const existing = await prisma.service.findUnique({ where: { id: parseInt(id) } });
+    if (!existing) return res.status(404).json({ error: 'Servicio no encontrado.' });
+
+    const effectiveName = name !== undefined ? String(name).trim() : existing.name;
+    const defaultConfig = findServiceConfig(effectiveName);
     const updated = await prisma.service.update({
       where: { id: parseInt(id) },
       data: {
-        ...(name !== undefined && { name }),
+        ...(name !== undefined && { name: effectiveName }),
         ...(description !== undefined && { description }),
         ...(price !== undefined && { price: Number(price) }),
         ...(durationMinutes !== undefined && { durationMinutes: parseInt(durationMinutes) }),
-        ...(imageUrl !== undefined && { imageUrl: imageUrl ? String(imageUrl).trim() : null }),
+        ...(defaultConfig && { imageUrl: defaultConfig.imageUrl }),
         ...(active !== undefined && { active: Boolean(active) }),
         ...(isActive !== undefined && { active: Boolean(isActive) })
       }
@@ -81,4 +98,4 @@ const deleteService = async (req, res) => {
   }
 };
 
-module.exports = { getServices, createService, updateService, deleteService };
+module.exports = { getServices, createService, updateService, deleteService, syncDefaultServices };

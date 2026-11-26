@@ -23,3 +23,14 @@ export const apiRequest = async (endpoint, options = {}) => {
 
   return data;
 };
+
+export const isActiveBarber = (barber) =>
+  barber?.active === true
+  && (barber?.user ? barber.user.active === true : true)
+  && String(barber?.displayName || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() !== 'santi';
+
+export const filterActiveBarbers = (barbers) =>
+  Array.isArray(barbers) ? barbers.filter(isActiveBarber) : [];
+
+export const filterActiveServices = (services) =>
+  Array.isArray(services) ? services.filter((service) => service?.active !== false) : [];
