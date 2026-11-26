@@ -1,4 +1,5 @@
-const API_URL = 'http://localhost:3000/api/v1';
+const BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/+$/, '');
+const API_URL = `${BASE_URL}/api/v1`;
 
 export const apiRequest = async (endpoint, options = {}) => {
   const token = localStorage.getItem('barber_token');
