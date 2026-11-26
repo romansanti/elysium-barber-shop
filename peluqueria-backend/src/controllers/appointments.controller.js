@@ -29,9 +29,19 @@ const getAppointments = async (req, res) => {
 
 const createAppointment = async (req, res) => {
   try {
-    const { firstName, lastName, whatsapp, email, barberId, serviceId, date, startTime, notes } = req.body;
+    const body = req.body || {};
+    const customerInput = body.customer || {};
+    const firstName = body.firstName || customerInput.firstName || customerInput.name || '';
+    const lastName = body.lastName || customerInput.lastName || '';
+    const whatsapp = body.whatsapp || customerInput.whatsapp || '';
+    const email = body.email || customerInput.email || null;
+    const barberValue = body.barberId ?? body.barber?.id;
+    const serviceId = body.serviceId ?? body.service?.id;
+    const date = body.appointmentDate || body.date;
+    const startTime = body.startTime || body.time;
+    const notes = body.notes || null;
 
-    if (!firstName || !lastName || !whatsapp || !barberId || !serviceId || !date || !startTime) {
+    if (!firstName || !whatsapp || !serviceId || !date || !startTime) {
       return res.status(400).json({ error: 'Faltan datos obligatorios para reservar el turno.' });
     }
 
@@ -41,56 +51,54 @@ const createAppointment = async (req, res) => {
     const startMins = timeToMinutes(startTime);
     const endMins = startMins + service.durationMinutes;
     const endTime = minutesToTime(endMins);
-
-    const dateObj = new Date(date);
+    const dateObj = new Date(`${date}T00:00:00.000Z`);
+    if (Number.isNaN(dateObj.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
     const weekday = dateObj.getUTCDay();
 
-    const schedules = await prisma.barberSchedule.findMany({
-      where: { barberId: parseInt(barberId), weekday, active: true },
-    });
+    let barberId = null;
+    const chooseAny = !barberValue || String(barberValue).toUpperCase() === 'ANY';
 
-    if (schedules.length === 0) {
-      return res.status(400).json({ error: 'El local permanece cerrado ese día.' });
-    }
+    if (chooseAny) {
+      const barbers = await prisma.barber.findMany({ where: { active: true }, include: { schedules: true } });
+      for (const barber of barbers) {
+        const schedules = await prisma.barberSchedule.findMany({
+          where: { barberId: barber.id, weekday, active: true },
+        });
+        const fits = schedules.some((s) => startMins >= timeToMinutes(s.startTime) && endMins <= timeToMinutes(s.endTime));
+        if (!fits) continue;
+        const occupied = await prisma.appointment.findMany({
+          where: { barberId: barber.id, appointmentDate: dateObj, status: { in: ['PENDING', 'CONFIRMED'] } },
+        });
+        const free = !occupied.some((appt) => startMins < timeToMinutes(appt.endTime) && endMins > timeToMinutes(appt.startTime));
+        if (free) { barberId = barber.id; break; }
+      }
+      if (!barberId) return res.status(409).json({ error: 'No hay un barbero disponible en ese horario.' });
+    } else {
+      barberId = parseInt(barberValue);
+      const schedules = await prisma.barberSchedule.findMany({
+        where: { barberId, weekday, active: true },
+      });
+      if (schedules.length === 0) return res.status(400).json({ error: 'El local permanece cerrado ese día.' });
+      const fits = schedules.some((s) => startMins >= timeToMinutes(s.startTime) && endMins <= timeToMinutes(s.endTime));
+      if (!fits) return res.status(400).json({ error: 'El horario elegido está fuera del horario de atención.' });
 
-    const fitsInAnyShift = schedules.some((sch) => {
-      const workStart = timeToMinutes(sch.startTime);
-      const workEnd = timeToMinutes(sch.endTime);
-      return startMins >= workStart && endMins <= workEnd;
-    });
-
-    if (!fitsInAnyShift) {
-      return res.status(400).json({ error: 'El horario elegido está fuera del horario de atención.' });
-    }
-
-    const existingAppointments = await prisma.appointment.findMany({
-      where: {
-        barberId: parseInt(barberId),
-        appointmentDate: dateObj,
-        status: { in: ['PENDING', 'CONFIRMED'] },
-      },
-    });
-
-    const hasConflict = existingAppointments.some((appt) => {
-      const apptStart = timeToMinutes(appt.startTime);
-      const apptEnd = timeToMinutes(appt.endTime);
-      return startMins < apptEnd && endMins > apptStart;
-    });
-
-    if (hasConflict) {
-      return res.status(409).json({ error: 'Ese horario ya fue ocupado. Por favor elegí otro.' });
+      const occupied = await prisma.appointment.findMany({
+        where: { barberId, appointmentDate: dateObj, status: { in: ['PENDING', 'CONFIRMED'] } },
+      });
+      const conflict = occupied.some((appt) => startMins < timeToMinutes(appt.endTime) && endMins > timeToMinutes(appt.startTime));
+      if (conflict) return res.status(409).json({ error: 'Ese horario ya fue ocupado. Por favor elegí otro.' });
     }
 
     const customer = await prisma.customer.upsert({
       where: { whatsapp },
       update: { firstName, lastName, ...(email && { email }) },
-      create: { firstName, lastName, whatsapp, email: email || null },
+      create: { firstName, lastName, whatsapp, email },
     });
 
     const newAppointment = await prisma.appointment.create({
       data: {
         customerId: customer.id,
-        barberId: parseInt(barberId),
+        barberId,
         serviceId: parseInt(serviceId),
         appointmentDate: dateObj,
         startTime,
@@ -99,19 +107,12 @@ const createAppointment = async (req, res) => {
         durationSnapshot: service.durationMinutes,
         status: 'CONFIRMED',
         cancellationCode: crypto.randomBytes(8).toString('hex'),
-        notes: notes || null,
+        notes,
       },
-      include: {
-        customer: true,
-        barber: { include: { user: true } },
-        service: true,
-      },
+      include: { customer: true, barber: { include: { user: true } }, service: true },
     });
 
-    sendNewAppointmentEmail(newAppointment).catch((err) =>
-      console.error('Error enviando correo de turno:', err)
-    );
-
+    sendNewAppointmentEmail(newAppointment).catch((err) => console.error('Error enviando correo de turno:', err));
     res.status(201).json(newAppointment);
   } catch (error) {
     console.error(error);

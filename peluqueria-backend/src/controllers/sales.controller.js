@@ -26,86 +26,60 @@ const getSales = async (req, res) => {
   }
 };
 
-// Registrar un cobro (servicios y/o productos)
+// Registrar un cobro (servicios y/o productos/bebidas)
 const createSale = async (req, res) => {
   try {
     const { barberId, customerId, appointmentId, items, payments } = req.body;
 
-    if (!barberId || !items || items.length === 0 || !payments || payments.length === 0) {
+    if (!barberId || !Array.isArray(items) || items.length === 0 || !Array.isArray(payments) || payments.length === 0) {
       return res.status(400).json({ error: 'Faltan datos obligatorios (barberId, items o payments).' });
     }
 
     const sale = await prisma.$transaction(async (tx) => {
       let total = 0;
       const preparedItems = [];
+      const barber = await tx.barber.findUnique({ where: { id: parseInt(barberId) } });
+      if (!barber) throw new Error('Barbero no encontrado.');
 
       for (const item of items) {
         const quantity = parseInt(item.quantity) || 1;
+        const itemType = String(item.itemType || '').toUpperCase();
 
-        if (item.itemType === 'SERVICE') {
-          const service = await tx.service.findUnique({
-            where: { id: parseInt(item.serviceId) }
-          });
+        if (itemType === 'SERVICE') {
+          const service = await tx.service.findUnique({ where: { id: parseInt(item.serviceId) } });
           if (!service) throw new Error(`Servicio ID ${item.serviceId} no encontrado.`);
-
           const unitPrice = Number(service.price);
           const subtotal = unitPrice * quantity;
+          const commissionAmount = subtotal * (Number(barber.commissionRate) || 0) / 100;
           total += subtotal;
+          preparedItems.push({ itemType: 'SERVICE', serviceId: service.id, description: service.name, quantity, unitPrice, subtotal, commissionAmount });
+        } else if (itemType === 'PRODUCT' || itemType === 'BEVERAGE') {
+          const product = await tx.product.findUnique({ where: { id: parseInt(item.productId) } });
+          if (!product) throw new Error(`Producto/Bebida ID ${item.productId} no encontrado.`);
+          if (product.stock < quantity) throw new Error(`Stock insuficiente para ${product.name} (disponible: ${product.stock}).`);
 
-          preparedItems.push({
-            itemType: 'SERVICE',
-            serviceId: service.id,
-            description: service.name,
-            quantity,
-            unitPrice,
-            subtotal
-          });
-        } else if (item.itemType === 'PRODUCT') {
-          const product = await tx.product.findUnique({
-            where: { id: parseInt(item.productId) }
-          });
-          if (!product) throw new Error(`Producto ID ${item.productId} no encontrado.`);
-          if (product.stock < quantity) {
-            throw new Error(`Stock insuficiente para ${product.name} (disponible: ${product.stock}).`);
-          }
-
-          // Descontar stock y guardar el movimiento
-          await tx.product.update({
-            where: { id: product.id },
-            data: { stock: { decrement: quantity } }
-          });
-
-          await tx.stockMovement.create({
-            data: {
-              productId: product.id,
-              type: 'OUT',
-              quantity,
-              reason: 'Venta en caja'
-            }
-          });
+          await tx.product.update({ where: { id: product.id }, data: { stock: { decrement: quantity } } });
+          await tx.stockMovement.create({ data: { productId: product.id, type: 'OUT', quantity, reason: 'Venta en caja' } });
 
           const unitPrice = Number(product.price);
           const subtotal = unitPrice * quantity;
+          const commissionAmount = subtotal * (Number(product.commissionRate) || 0) / 100;
           total += subtotal;
-
           preparedItems.push({
-            itemType: 'PRODUCT',
+            itemType: product.itemGroup || itemType,
             productId: product.id,
             description: product.name,
             quantity,
             unitPrice,
-            subtotal
+            subtotal,
+            commissionAmount,
           });
         } else {
-          throw new Error('Tipo de ítem inválido. Debe ser SERVICE o PRODUCT.');
+          throw new Error('Tipo de ítem inválido. Debe ser SERVICE, PRODUCT o BEVERAGE.');
         }
       }
 
-      const preparedPayments = payments.map((p) => ({
-        method: p.method,
-        amount: Number(p.amount)
-      }));
-
+      const preparedPayments = payments.map((p) => ({ method: String(p.method).toUpperCase(), amount: Number(p.amount) }));
       const createdSale = await tx.sale.create({
         data: {
           barberId: parseInt(barberId),
@@ -114,24 +88,14 @@ const createSale = async (req, res) => {
           total,
           status: 'COMPLETED',
           items: { create: preparedItems },
-          payments: { create: preparedPayments }
+          payments: { create: preparedPayments },
         },
-        include: {
-          items: true,
-          payments: true,
-          customer: true,
-          barber: true
-        }
+        include: { items: true, payments: true, customer: true, barber: true },
       });
 
-      // Si se cobró un turno agendado, pasa a COMPLETED automáticamente
       if (appointmentId) {
-        await tx.appointment.update({
-          where: { id: parseInt(appointmentId) },
-          data: { status: 'COMPLETED' }
-        });
+        await tx.appointment.update({ where: { id: parseInt(appointmentId) }, data: { status: 'COMPLETED' } });
       }
-
       return createdSale;
     });
 
@@ -157,7 +121,7 @@ const deleteSale = async (req, res) => {
 
     await prisma.$transaction(async (tx) => {
       for (const item of sale.items) {
-        if (item.itemType === 'PRODUCT' && item.productId) {
+        if ((item.itemType === 'PRODUCT' || item.itemType === 'BEVERAGE') && item.productId) {
           await tx.product.update({
             where: { id: item.productId },
             data: { stock: { increment: item.quantity } }

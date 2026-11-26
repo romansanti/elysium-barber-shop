@@ -38,7 +38,7 @@ const createService = async (req, res) => {
 const updateService = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, price, durationMinutes, active } = req.body;
+    const { name, description, price, durationMinutes, active, isActive } = req.body;
     const updated = await prisma.service.update({
       where: { id: parseInt(id) },
       data: {
@@ -46,7 +46,8 @@ const updateService = async (req, res) => {
         ...(description !== undefined && { description }),
         ...(price !== undefined && { price: Number(price) }),
         ...(durationMinutes !== undefined && { durationMinutes: parseInt(durationMinutes) }),
-        ...(active !== undefined && { active })
+        ...(active !== undefined && { active: Boolean(active) }),
+        ...(isActive !== undefined && { active: Boolean(isActive) })
       }
     });
     res.json(updated);
@@ -56,4 +57,26 @@ const updateService = async (req, res) => {
   }
 };
 
-module.exports = { getServices, createService, updateService };
+const deleteService = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [appointments, salesItems] = await Promise.all([
+      prisma.appointment.count({ where: { serviceId: id } }),
+      prisma.saleItem.count({ where: { serviceId: id } }),
+    ]);
+
+    if (appointments > 0 || salesItems > 0) {
+      const updated = await prisma.service.update({ where: { id }, data: { active: false } });
+      return res.json({ message: 'Servicio desactivado porque tiene turnos o ventas asociadas', service: updated });
+    }
+
+    await prisma.service.delete({ where: { id } });
+    res.json({ message: 'Servicio eliminado correctamente' });
+  } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Servicio no encontrado' });
+    console.error(error);
+    res.status(500).json({ error: 'Error al eliminar el servicio' });
+  }
+};
+
+module.exports = { getServices, createService, updateService, deleteService };

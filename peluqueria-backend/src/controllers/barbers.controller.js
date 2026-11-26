@@ -20,6 +20,28 @@ const getBarbers = async (req, res) => {
   }
 };
 
+// Actualizar un barbero
+const updateBarber = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { commissionRate, displayName, active } = req.body;
+    const data = {};
+    if (displayName !== undefined) data.displayName = String(displayName).trim();
+    if (active !== undefined) data.active = Boolean(active);
+    if (commissionRate !== undefined) {
+      const rate = Number(commissionRate);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 100) return res.status(400).json({ error: 'La comisión debe estar entre 0 y 100.' });
+      data.commissionRate = rate;
+    }
+    const barber = await prisma.barber.update({ where: { id }, data });
+    res.json(barber);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al actualizar el barbero' });
+  }
+};
+
 module.exports = {
-  getBarbers
+  getBarbers,
+  updateBarber
 };

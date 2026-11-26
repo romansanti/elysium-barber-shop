@@ -16,6 +16,7 @@ const barbersRoutes = require('./src/routes/barbers.routes');
 const appointmentsRoutes = require('./src/routes/appointments.routes');
 const productsRoutes = require('./src/routes/products.routes');
 const salesRoutes = require('./src/routes/sales.routes');
+const operationsRoutes = require('./src/routes/operations.routes');
 const { verifyToken } = require('./src/middlewares/auth.middleware');
 
 // Usar rutas
@@ -25,6 +26,7 @@ app.use('/api/v1/barbers', barbersRoutes);
 app.use('/api/v1/appointments', appointmentsRoutes);
 app.use('/api/v1/products', productsRoutes);
 app.use('/api/v1/sales', verifyToken, salesRoutes); // Ruta protegida: solo con login
+app.use('/api/v1', operationsRoutes);
 
 // Ruta de estado
 app.get('/', (req, res) => {

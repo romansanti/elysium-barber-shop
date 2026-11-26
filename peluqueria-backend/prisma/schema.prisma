@@ -119,14 +119,16 @@ model ProductCategory {
 }
 
 model Product {
-  id         Int     @id @default(autoincrement())
-  categoryId Int
-  name       String  @db.VarChar(100)
-  price      Decimal @db.Decimal(10, 2)
-  costPrice  Decimal @db.Decimal(10, 2)
-  stock      Int     @default(0)
-  minStock   Int     @default(5)
-  active     Boolean @default(true)
+  id             Int     @id @default(autoincrement())
+  categoryId     Int
+  name           String  @db.VarChar(100)
+  price          Decimal @db.Decimal(10, 2)
+  costPrice      Decimal @db.Decimal(10, 2)
+  stock          Int     @default(0)
+  minStock       Int     @default(5)
+  itemGroup      String  @default("BEVERAGE") @db.VarChar(20)
+  commissionRate Float   @default(0)
+  active         Boolean @default(true)
 
   category       ProductCategory @relation(fields: [categoryId], references: [id])
   saleItems      SaleItem[]
@@ -151,6 +153,8 @@ model Sale {
   appointmentId Int?
   total         Decimal  @db.Decimal(10, 2)
   status        String   @default("COMPLETED") @db.VarChar(20)
+  settled       Boolean  @default(false)
+  settlementId  Int?
   createdAt     DateTime @default(now())
 
   customer    Customer?    @relation(fields: [customerId], references: [id])
@@ -161,15 +165,18 @@ model Sale {
 }
 
 model SaleItem {
-  id          Int     @id @default(autoincrement())
-  saleId      Int
-  itemType    String  @db.VarChar(20)
-  serviceId   Int?
-  productId   Int?
-  description String  @db.VarChar(150)
-  quantity    Int
-  unitPrice   Decimal @db.Decimal(10, 2)
-  subtotal    Decimal @db.Decimal(10, 2)
+  id               Int     @id @default(autoincrement())
+  saleId           Int
+  itemType         String  @db.VarChar(20)
+  serviceId        Int?
+  productId        Int?
+  description      String  @db.VarChar(150)
+  quantity         Int
+  unitPrice        Decimal @db.Decimal(10, 2)
+  subtotal         Decimal @db.Decimal(10, 2)
+  commissionAmount Float   @default(0)
+  settled          Boolean @default(false)
+  settlementId     Int?
 
   sale    Sale     @relation(fields: [saleId], references: [id])
   service Service? @relation(fields: [serviceId], references: [id])
@@ -198,4 +205,38 @@ model Notification {
   createdAt     DateTime  @default(now())
 
   appointment Appointment @relation(fields: [appointmentId], references: [id])
+}
+
+model CashMovement {
+  id            Int      @id @default(autoincrement())
+  type          String   @db.VarChar(20)
+  category      String   @db.VarChar(100)
+  description   String?  @db.VarChar(255)
+  amount        Float
+  paymentMethod String   @db.VarChar(20)
+  barberId      Int?
+  registeredBy  String?  @db.VarChar(100)
+  settled       Boolean  @default(false)
+  settlementId  Int?
+  createdAt     DateTime @default(now())
+}
+
+model Settlement {
+  id                 Int      @id @default(autoincrement())
+  barberId           Int
+  dateFrom           String?  @db.VarChar(10)
+  dateTo             String?  @db.VarChar(10)
+  servicesCount      Int
+  grossAmount        Float
+  commissionAmount   Float
+  advancesDeducted   Float
+  netPaid            Float
+  createdAt          DateTime @default(now())
+}
+
+model SecurityPin {
+  id        Int     @id @default(autoincrement())
+  actionKey String  @unique @db.VarChar(50)
+  label     String  @db.VarChar(100)
+  pin       String? @db.VarChar(4)
 }

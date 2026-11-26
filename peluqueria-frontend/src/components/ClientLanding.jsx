@@ -9,7 +9,8 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
   const [services, setServices] = useState([]);
   const [barbers, setBarbers] = useState([]);
 
-  // Formulario de reserva
+  // Wizard de reserva
+  const [wizardStep, setWizardStep] = useState(1);
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [selectedBarberId, setSelectedBarberId] = useState('');
   const [appointmentDate, setAppointmentDate] = useState(() => new Date().toISOString().split('T')[0]);
@@ -40,8 +41,6 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
         ]);
         setServices(srvs);
         setBarbers(brbs);
-        if (srvs.length > 0) setSelectedServiceId(String(srvs[0].id));
-        if (brbs.length > 0) setSelectedBarberId(String(brbs[0].id));
       } catch (err) {
         console.error('Error cargando servicios/barberos:', err);
       }
@@ -51,15 +50,29 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
 
   useEffect(() => {
     if (!selectedBarberId || !selectedServiceId || !appointmentDate) return;
+
     const fetchSlots = async () => {
       setLoadingSlots(true);
       setSelectedTime('');
       try {
-        const res = await apiRequest(
-          `/appointments/availability?barberId=${selectedBarberId}&serviceId=${selectedServiceId}&date=${appointmentDate}`
-        );
-        const slots = Array.isArray(res) ? res : (res.slots || res.availableSlots || []);
-        setAvailableSlots(slots);
+        const barberIds = selectedBarberId === 'ANY'
+          ? barbers.map((barber) => barber.id)
+          : [selectedBarberId];
+
+        const responses = await Promise.allSettled(barberIds.map((barberId) =>
+          apiRequest(`/appointments/availability?barberId=${barberId}&serviceId=${selectedServiceId}&date=${appointmentDate}`)
+        ));
+
+        const union = new Set();
+        responses.forEach((response) => {
+          if (response.status === 'fulfilled') {
+            const slots = Array.isArray(response.value)
+              ? response.value
+              : (response.value.slots || response.value.availableSlots || []);
+            slots.forEach((slot) => union.add(typeof slot === 'string' ? slot : slot.startTime));
+          }
+        });
+        setAvailableSlots([...union].sort());
       } catch {
         setAvailableSlots([]);
       } finally {
@@ -67,7 +80,7 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
       }
     };
     fetchSlots();
-  }, [selectedBarberId, selectedServiceId, appointmentDate]);
+  }, [selectedBarberId, selectedServiceId, appointmentDate, barbers]);
 
   const handleBook = async (e) => {
     e.preventDefault();
@@ -81,7 +94,7 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
       const data = await apiRequest('/appointments', {
         method: 'POST',
         body: JSON.stringify({
-          barberId: Number(selectedBarberId),
+          barberId: selectedBarberId === 'ANY' ? 'ANY' : Number(selectedBarberId),
           serviceId: Number(selectedServiceId),
           appointmentDate,
           startTime: selectedTime,
@@ -123,7 +136,41 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
   const formatPrice = (val) =>
     new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val);
 
+  const next14Days = Array.from({ length: 14 }, (_, index) => {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() + index);
+    return date;
+  });
+
+  const toLocalDate = (date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const dayName = (date) => ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'][date.getDay()];
+
+  const canAdvance = () => {
+    if (wizardStep === 1) return Boolean(selectedBarberId);
+    if (wizardStep === 2) return Boolean(selectedServiceId);
+    if (wizardStep === 3) return Boolean(appointmentDate && selectedTime);
+    return Boolean(firstName.trim() && lastName.trim() && whatsapp.trim());
+  };
+
   const openPanel = () => (onOpenAdmin || onGoAdmin)?.();
+
+  const getServiceImage = (serviceName) => {
+    const name = String(serviceName || '').toLowerCase();
+    if (name.includes('barba')) {
+      return 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=800&q=80';
+    }
+    if (name.includes('niño') || name.includes('nino')) {
+      return 'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?auto=format&fit=crop&w=800&q=80';
+    }
+    return 'https://images.unsplash.com/photo-1585747860715-2ba37e788b70?auto=format&fit=crop&w=800&q=80';
+  };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -224,12 +271,12 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
                 Te esperamos el <strong>{confirmedBooking.appointmentDate?.split('T')[0]}</strong> a las{' '}
                 <strong>{confirmedBooking.startTime} hs</strong> en <strong>Av. Juan B. Justo 2219</strong>.
               </p>
-              {confirmedBooking.cancelCode && (
+              {confirmedBooking.cancelCode || confirmedBooking.cancellationCode ? (
                 <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3.5 text-xs">
                   <span className="text-zinc-400 block mb-1">Guardá este código por si necesitás cancelar:</span>
-                  <code className="text-amber-400 font-mono font-bold text-sm select-all">{confirmedBooking.cancelCode}</code>
+                  <code className="text-amber-400 font-mono font-bold text-sm select-all">{confirmedBooking.cancelCode || confirmedBooking.cancellationCode}</code>
                 </div>
-              )}
+              ) : null}
               <button
                 onClick={() => setConfirmedBooking(null)}
                 className="bg-zinc-800 hover:bg-zinc-700 text-sm font-bold px-4 py-2.5 rounded-xl cursor-pointer"
@@ -238,137 +285,173 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
               </button>
             </div>
           ) : (
-            <form onSubmit={handleBook} className="space-y-5">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">1. Elegí tu Barbero</label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {barbers.map((b) => (
+            <form onSubmit={handleBook} className="space-y-6">
+              <div className="grid grid-cols-4 gap-2">
+                {[1, 2, 3, 4].map((step) => (
+                  <button
+                    type="button"
+                    key={step}
+                    onClick={() => step < wizardStep && setWizardStep(step)}
+                    className="text-left cursor-pointer"
+                  >
+                    <div className={`h-1.5 rounded-full ${step <= wizardStep ? 'bg-amber-500' : 'bg-zinc-800'}`} />
+                    <span className={`text-[11px] mt-2 block ${step <= wizardStep ? 'text-amber-400 font-bold' : 'text-zinc-500'}`}>
+                      Paso {step}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {wizardStep === 1 && (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-xl font-extrabold">Elegí tu Barbero</h3>
+                    <p className="text-xs text-zinc-400 mt-1">Seleccioná un profesional o el turno más próximo disponible.</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {barbers.map((barber) => (
                       <button
                         type="button"
-                        key={b.id}
-                        onClick={() => setSelectedBarberId(String(b.id))}
-                        className={`p-3.5 rounded-xl border text-left transition cursor-pointer flex items-center gap-2.5 ${
-                          String(selectedBarberId) === String(b.id)
-                            ? 'bg-amber-500 text-zinc-950 border-amber-500 font-bold'
-                            : 'bg-zinc-950 text-zinc-200 border-zinc-800 hover:border-amber-500/50'
-                        }`}
+                        key={barber.id}
+                        onClick={() => setSelectedBarberId(String(barber.id))}
+                        className={`min-h-32 rounded-2xl border p-5 text-left transition cursor-pointer ${String(selectedBarberId) === String(barber.id) ? 'bg-amber-500 text-zinc-950 border-amber-500' : 'bg-zinc-950 border-zinc-800 hover:border-amber-500/50'}`}
                       >
-                        <User className="w-4 h-4 shrink-0" />
-                        <span className="text-sm font-extrabold">{b.displayName}</span>
+                        <User className="w-7 h-7 mb-4" />
+                        <span className="block font-extrabold text-lg">{barber.displayName}</span>
+                        <span className={`text-xs ${String(selectedBarberId) === String(barber.id) ? 'text-zinc-800' : 'text-zinc-400'}`}>Barbero profesional</span>
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedBarberId('ANY')}
+                      className={`min-h-32 rounded-2xl border p-5 text-left transition cursor-pointer ${selectedBarberId === 'ANY' ? 'bg-amber-500 text-zinc-950 border-amber-500' : 'bg-zinc-950 border-amber-500/30 hover:border-amber-500/70'}`}
+                    >
+                      <Clock className="w-7 h-7 mb-4" />
+                      <span className="block font-extrabold text-lg">Cualquier barbero</span>
+                      <span className={`text-xs ${selectedBarberId === 'ANY' ? 'text-zinc-800' : 'text-zinc-400'}`}>Turno más próximo disponible</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {wizardStep === 2 && (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-xl font-extrabold">Elegí el Servicio</h3>
+                    <p className="text-xs text-zinc-400 mt-1">Seleccioná el servicio que necesitás.</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {services.map((service) => (
+                      <button
+                        type="button"
+                        key={service.id}
+                        onClick={() => setSelectedServiceId(String(service.id))}
+                        className={`overflow-hidden rounded-2xl border text-left transition cursor-pointer ${String(selectedServiceId) === String(service.id) ? 'border-amber-500 bg-amber-500/5' : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700'}`}
+                      >
+                        <img
+                          src={getServiceImage(service.name)}
+                          alt={service.name}
+                          className="h-32 w-full object-cover object-top opacity-90"
+                          onError={(event) => { event.currentTarget.src = '/hero.png'; }}
+                        />
+                        <div className="p-4 flex items-start justify-between gap-3">
+                          <div>
+                            <span className="font-extrabold block">{service.name}</span>
+                            <span className="text-xs text-zinc-400 flex items-center gap-1 mt-1"><Clock className="w-3.5 h-3.5" /> {service.durationMinutes} min</span>
+                          </div>
+                          <span className="text-amber-400 font-extrabold">{formatPrice(service.price)}</span>
+                        </div>
                       </button>
                     ))}
                   </div>
                 </div>
+              )}
 
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">2. Elegí el Servicio</label>
-                  <select
-                    value={selectedServiceId}
-                    onChange={(e) => setSelectedServiceId(e.target.value)}
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3.5 text-sm"
-                    required
-                  >
-                    {services.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} — {formatPrice(s.price)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              {wizardStep === 3 && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-xl font-extrabold">Elegí el Horario</h3>
+                    <p className="text-xs text-zinc-400 mt-1">Seleccioná un día y luego una hora disponible.</p>
+                  </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">3. Fecha</label>
-                  <input
-                    type="date"
-                    min={new Date().toISOString().split('T')[0]}
-                    value={appointmentDate}
-                    onChange={(e) => setAppointmentDate(e.target.value)}
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm"
-                    required
-                  />
-                </div>
+                  {selectedBarberId !== 'ANY' && (
+                    <div className="bg-sky-500/10 border border-sky-500/25 text-sky-200 text-xs rounded-xl px-4 py-3">
+                      Atención: estos horarios son los de <strong>{barbers.find((b) => String(b.id) === String(selectedBarberId))?.displayName}</strong>. Si buscás el turno más próximo posible, te recomendamos elegir “Cualquier barbero”.
+                    </div>
+                  )}
 
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">4. Horarios Disponibles</label>
-                  {loadingSlots ? (
-                    <p className="text-xs text-zinc-400 py-3">Buscando horarios libres...</p>
-                  ) : availableSlots.length === 0 ? (
-                    <p className="text-xs text-amber-400 py-3">No hay turnos libres para esa fecha (recordá que domingos está cerrado).</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {availableSlots.map((slot) => {
-                        const timeStr = typeof slot === 'string' ? slot : slot.startTime;
+                  <div className="overflow-x-auto pb-2">
+                    <div className="flex gap-2 min-w-max">
+                      {next14Days.map((date) => {
+                        const dateValue = toLocalDate(date);
+                        const sunday = date.getDay() === 0;
+                        const selected = appointmentDate === dateValue;
                         return (
                           <button
                             type="button"
-                            key={timeStr}
-                            onClick={() => setSelectedTime(timeStr)}
-                            className={`px-3 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                              selectedTime === timeStr
-                                ? 'bg-amber-500 text-zinc-950 border-amber-500'
-                                : 'bg-zinc-950 text-zinc-200 border-zinc-800 hover:border-amber-500/50'
-                            }`}
+                            key={dateValue}
+                            disabled={sunday}
+                            onClick={() => setAppointmentDate(dateValue)}
+                            className={`w-16 rounded-xl border py-3 text-center transition ${sunday ? 'opacity-35 cursor-not-allowed border-zinc-900' : 'cursor-pointer'} ${selected ? 'bg-amber-500 text-zinc-950 border-amber-500' : 'bg-zinc-950 border-zinc-800 hover:border-amber-500/50'}`}
                           >
-                            {timeStr} hs
+                            <span className="block text-[10px] font-bold">{dayName(date)}</span>
+                            <span className="block text-lg font-extrabold">{date.getDate()}</span>
                           </button>
                         );
                       })}
                     </div>
+                  </div>
+
+                  {loadingSlots ? (
+                    <p className="text-sm text-zinc-400 py-4">Buscando horarios libres...</p>
+                  ) : !appointmentDate || new Date(`${appointmentDate}T12:00:00`).getDay() === 0 ? (
+                    <p className="text-sm text-amber-400 py-4">Los domingos el local permanece cerrado.</p>
+                  ) : availableSlots.length === 0 ? (
+                    <p className="text-sm text-amber-400 py-4">No hay turnos libres para esa fecha.</p>
+                  ) : (
+                    <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 gap-2">
+                      {availableSlots.map((slot) => (
+                        <button
+                          type="button"
+                          key={slot}
+                          onClick={() => setSelectedTime(slot)}
+                          className={`py-2.5 rounded-xl text-xs font-bold border transition cursor-pointer ${selectedTime === slot ? 'bg-amber-500 text-zinc-950 border-amber-500' : 'bg-zinc-950 text-zinc-200 border-zinc-800 hover:border-amber-500/50'}`}
+                        >
+                          {slot} hs
+                        </button>
+                      ))}
+                    </div>
                   )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <input
-                  type="text"
-                  placeholder="Tu Nombre"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  className="bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm"
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="Tu Apellido"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  className="bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm"
-                  required
-                />
-                <input
-                  type="tel"
-                  placeholder="WhatsApp (ej: 3816123456)"
-                  value={whatsapp}
-                  onChange={(e) => setWhatsapp(e.target.value)}
-                  className="bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm"
-                  required
-                />
-              </div>
-
-              <input
-                type="text"
-                placeholder="Nota opcional (ej: corte degradé bajo, barba perfilada...)"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm"
-              />
-
-              {bookingError && (
-                <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs p-3 rounded-xl">
-                  {bookingError}
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={bookingLoading}
-                className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-extrabold py-3.5 rounded-2xl transition cursor-pointer text-base"
-              >
-                {bookingLoading ? 'Confirmando...' : 'Confirmar Turno'}
-              </button>
+              {wizardStep === 4 && (
+                <div className="space-y-5">
+                  <h3 className="text-xl font-extrabold">Tus Datos y Confirmación</h3>
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    <div><span className="block text-xs text-zinc-500">Barbero</span><strong>{selectedBarberId === 'ANY' ? 'Cualquier barbero' : barbers.find((b) => String(b.id) === String(selectedBarberId))?.displayName}</strong></div>
+                    <div><span className="block text-xs text-zinc-500">Servicio</span><strong>{services.find((s) => String(s.id) === String(selectedServiceId))?.name}</strong></div>
+                    <div><span className="block text-xs text-zinc-500">Fecha</span><strong>{appointmentDate}</strong></div>
+                    <div><span className="block text-xs text-zinc-500">Horario</span><strong>{selectedTime} hs</strong></div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input type="text" placeholder="Tu Nombre" value={firstName} onChange={(e) => setFirstName(e.target.value)} className="bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
+                    <input type="text" placeholder="Tu Apellido" value={lastName} onChange={(e) => setLastName(e.target.value)} className="bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
+                    <input type="tel" placeholder="WhatsApp (ej: 3816123456)" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="sm:col-span-2 bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
+                    <textarea placeholder="Nota opcional (ej: corte degradé bajo, barba perfilada...)" value={notes} onChange={(e) => setNotes(e.target.value)} className="sm:col-span-2 min-h-24 resize-y bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" />
+                  </div>
+                  {bookingError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs p-3 rounded-xl">{bookingError}</div>}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-3 pt-2">
+                <button type="button" onClick={() => setWizardStep((step) => Math.max(1, step - 1))} disabled={wizardStep === 1} className="px-5 py-3 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-sm disabled:opacity-40 cursor-pointer">← Volver</button>
+                {wizardStep < 4 ? (
+                  <button type="button" onClick={() => canAdvance() && setWizardStep((step) => step + 1)} disabled={!canAdvance()} className="px-6 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-extrabold text-sm disabled:opacity-40 cursor-pointer">Siguiente →</button>
+                ) : (
+                  <button type="submit" disabled={bookingLoading || !canAdvance()} className="px-6 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-extrabold text-sm disabled:opacity-40 cursor-pointer">{bookingLoading ? 'Confirmando...' : 'Confirmar Turno'}</button>
+                )}
+              </div>
             </form>
           )}
         </div>

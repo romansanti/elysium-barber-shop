@@ -39,7 +39,7 @@ const getStockMovements = async (req, res) => {
 // Crear un producto nuevo
 const createProduct = async (req, res) => {
   try {
-    const { name, categoryName, price, costPrice, stock, minStock } = req.body;
+    const { name, categoryName, price, costPrice, stock, minStock, itemGroup, commissionRate } = req.body;
 
     if (!name || price === undefined) {
       return res.status(400).json({ error: 'Nombre y precio son obligatorios.' });
@@ -64,6 +64,8 @@ const createProduct = async (req, res) => {
         costPrice: Number(costPrice) || 0,
         stock: initialStock,
         minStock: parseInt(minStock) || 5,
+        itemGroup: itemGroup === 'PRODUCT' ? 'PRODUCT' : 'BEVERAGE',
+        commissionRate: Number.isFinite(Number(commissionRate)) ? Number(commissionRate) : 0,
         ...(initialStock > 0 && {
           stockMovements: {
             create: {
@@ -133,7 +135,7 @@ const adjustStock = async (req, res) => {
 const updateProduct = async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { name, price, costPrice, minStock } = req.body;
+    const { name, price, costPrice, minStock, stock, itemGroup, commissionRate } = req.body;
     const updated = await prisma.product.update({
       where: { id },
       data: {
@@ -141,6 +143,10 @@ const updateProduct = async (req, res) => {
         ...(price !== undefined ? { price: Number(price) } : {}),
         ...(costPrice !== undefined ? { costPrice: Number(costPrice) } : {}),
         ...(minStock !== undefined ? { minStock: Number(minStock) } : {}),
+        ...(stock !== undefined ? { stock: Number(stock) } : {}),
+        ...(itemGroup !== undefined && ['PRODUCT', 'BEVERAGE'].includes(String(itemGroup).toUpperCase())
+          ? { itemGroup: String(itemGroup).toUpperCase() } : {}),
+        ...(commissionRate !== undefined ? { commissionRate: Number(commissionRate) } : {}),
       },
     });
     res.json(updated);

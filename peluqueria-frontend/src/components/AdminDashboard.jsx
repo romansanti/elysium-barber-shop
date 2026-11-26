@@ -1,997 +1,268 @@
-import { useState, useEffect } from 'react';
-import {
-  Scissors, Calendar, DollarSign, Package, LogOut, ArrowLeft,
-  Plus, Minus, AlertTriangle, ShoppingBag, Users, History,
-  ArrowUpRight, ArrowDownLeft, Clock, Trash2, Pencil
-} from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Calendar, Clock, DollarSign, History, Package, Scissors, ShieldCheck, Users, LogOut, ArrowLeft, Plus, Trash2, Pencil, ExternalLink } from 'lucide-react';
 import { apiRequest } from '../services/api';
 
-export default function AdminDashboard({ onBackToPublic }) {
-  const [token, setToken] = useState(localStorage.getItem('barber_token') || '');
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('barber_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+const formatMoney = (value) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(Number(value || 0));
+const localDate = (date = new Date()) => date.toLocaleDateString('en-CA');
 
+export default function AdminDashboardNew({ onBackToPublic }) {
+  const [token, setToken] = useState(localStorage.getItem('barber_token') || '');
+  const [tab, setTab] = useState('caja');
+  const [now, setNow] = useState(new Date());
   const [username, setUsername] = useState('marcosmayo23');
   const [password, setPassword] = useState('admin32');
   const [loginError, setLoginError] = useState('');
-  const [loginLoading, setLoginLoading] = useState(false);
-
-  const [activeTab, setActiveTab] = useState('caja');
-  const [now, setNow] = useState(new Date());
-
-  const [appointments, setAppointments] = useState([]);
   const [barbers, setBarbers] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [stockMovements, setStockMovements] = useState([]);
   const [services, setServices] = useState([]);
+  const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
-  const [loadWarning, setLoadWarning] = useState('');
-
-  // Filtros (Hoy arranca en $0 automáticamente cada día)
-  const [agendaBarberFilter, setAgendaBarberFilter] = useState('ALL');
+  const [appointments, setAppointments] = useState([]);
+  const [movements, setMovements] = useState([]);
+  const [allMovements, setAllMovements] = useState([]);
+  const [pins, setPins] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
+  const [pending, setPending] = useState({ days: [], advances: [], advancesDeducted: 0 });
+  const [selectedDates, setSelectedDates] = useState([]);
+  const [settlementBarberId, setSettlementBarberId] = useState('');
+  const [cashDate, setCashDate] = useState(localDate());
+  const [agendaDate, setAgendaDate] = useState(localDate());
   const [historyPeriod, setHistoryPeriod] = useState('TODAY');
-  const [historyBarberFilter, setHistoryBarberFilter] = useState('ALL');
-  const [commissionPeriod, setCommissionPeriod] = useState('TODAY');
-
-  // Caja (POS)
-  const [cart, setCart] = useState([]);
-  const [selectedSaleBarberId, setSelectedSaleBarberId] = useState(1);
+  const [saleBarberId, setSaleBarberId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('CASH');
-  const [linkedAppointmentId, setLinkedAppointmentId] = useState(null);
-  const [linkedCustomerId, setLinkedCustomerId] = useState(null);
-  const [saleMessage, setSaleMessage] = useState('');
+  const [cart, setCart] = useState([]);
+  const [cashModal, setCashModal] = useState(false);
+  const [advanceModal, setAdvanceModal] = useState(false);
+  const [movementForm, setMovementForm] = useState({ type: 'EXPENSE', category: 'Insumos', barberId: '', description: '', amount: '', paymentMethod: 'CASH' });
+  const [advanceForm, setAdvanceForm] = useState({ barberId: '', description: '', amount: '', paymentMethod: 'CASH' });
+  const [balancePeriod, setBalancePeriod] = useState('TODAY');
 
-  // Altas
-  const [newBarber, setNewBarber] = useState({ displayName: '', email: '', password: '', commissionRate: '50' });
-  const [stockReason, setStockReason] = useState('');
-  const [newProd, setNewProd] = useState({ name: '', categoryName: 'Bebidas', price: '', costPrice: '', stock: '', minStock: '5' });
-  const [newSrv, setNewSrv] = useState({ name: '', description: '', price: '', durationMinutes: '30' });
+  useEffect(() => { const timer = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(timer); }, []);
 
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const handleLogout = () => {
-    localStorage.removeItem('barber_token');
-    localStorage.removeItem('barber_user');
-    setToken('');
-    setUser(null);
+  const loadAll = async () => {
+    const endpoints = [['barbers','/barbers'],['services','/services'],['products','/products'],['sales','/sales'],['appointments','/appointments'],['pins','/security-pins'],['analytics','/analytics'],['allMovements','/cash-movements']];
+    await Promise.allSettled(endpoints.map(async ([key, endpoint]) => {
+      const value = await apiRequest(endpoint);
+      if (key === 'barbers') { setBarbers(value); if (!saleBarberId && value[0]) setSaleBarberId(String(value[0].id)); if (!settlementBarberId && value[0]) setSettlementBarberId(String(value[0].id)); }
+      if (key === 'services') setServices(value);
+      if (key === 'products') setProducts(value);
+      if (key === 'sales') setSales(value);
+      if (key === 'appointments') setAppointments(value);
+      if (key === 'pins') setPins(value);
+      if (key === 'analytics') setAnalytics(value);
+      if (key === 'allMovements') setAllMovements(value);
+    }));
   };
 
-  const loadAllData = async () => {
-    setLoadWarning('');
-    const results = await Promise.allSettled([
-      apiRequest('/appointments'),
-      apiRequest('/barbers'),
-      apiRequest('/products'),
-      apiRequest('/products/movements'),
-      apiRequest('/services'),
-      apiRequest('/sales'),
-    ]);
+  useEffect(() => { if (token) loadAll(); }, [token]);
+  useEffect(() => { if (!token) return; apiRequest(`/cash-movements?date=${cashDate}`).then(setMovements).catch(() => setMovements([])); }, [cashDate, token]);
+  useEffect(() => { if (!token) return; apiRequest('/cash-movements').then(setAllMovements).catch(() => setAllMovements([])); }, [token]);
+  useEffect(() => { if (!token || !settlementBarberId) return; apiRequest(`/settlements/pending/${settlementBarberId}`).then((value) => { setPending(value); setSelectedDates([]); }).catch(() => setPending({ days: [], advances: [], advancesDeducted: 0 })); }, [settlementBarberId, token]);
 
-    const [apptsRes, brbsRes, prodsRes, movsRes, srvsRes, slsRes] = results;
-    const failed = results.find((r) => r.status === 'rejected');
-    if (failed && failed.reason?.message?.includes('Token')) {
-      handleLogout();
-      return;
+  const login = async (event) => {
+    event.preventDefault(); setLoginError('');
+    try {
+      const data = await apiRequest('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+      localStorage.setItem('barber_token', data.token); localStorage.setItem('barber_user', JSON.stringify(data.user)); setToken(data.token);
+    } catch (error) { setLoginError(error.message); }
+  };
+
+  const logout = () => { localStorage.removeItem('barber_token'); localStorage.removeItem('barber_user'); setToken(''); };
+
+  if (!token) return (
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 grid place-items-center p-4">
+      <form onSubmit={login} className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-7 space-y-4">
+        <div className="flex items-center gap-3"><img src="/logo.png" className="h-12 w-12 object-contain rounded-xl border border-amber-500/40 p-1" onError={(e) => e.currentTarget.style.display='none'} /><div><b className="text-amber-400">ELYSIUM</b><p className="text-xs text-zinc-500">PANEL DEL LOCAL</p></div></div>
+        <input value={username} onChange={(e) => setUsername(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3" placeholder="Usuario" />
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3" placeholder="Contraseña" />
+        {loginError && <p className="text-red-400 text-sm">{loginError}</p>}<button className="w-full bg-amber-500 text-zinc-950 font-extrabold py-3 rounded-xl">Ingresar</button>
+        {onBackToPublic && <button type="button" onClick={onBackToPublic} className="w-full text-zinc-400 text-sm">Ver página de clientes</button>}
+      </form>
+    </div>
+  );
+
+  const start = new Date(`${cashDate}T00:00:00`); const end = new Date(`${cashDate}T23:59:59.999`);
+  const daySales = sales.filter((sale) => { const date = new Date(sale.createdAt); return date >= start && date <= end; });
+  const dayMovements = movements.filter((movement) => { const date = new Date(movement.createdAt); return date >= start && date <= end; });
+  let serviceRevenue = 0, productRevenue = 0, beverageRevenue = 0, serviceCount = 0, productCount = 0, beverageCount = 0;
+  daySales.forEach((sale) => (sale.items || []).forEach((item) => {
+    const amount = Number(item.subtotal || 0); const quantity = Number(item.quantity || 1);
+    if (item.itemType === 'SERVICE') { serviceRevenue += amount; serviceCount += quantity; }
+    else if (item.itemType === 'BEVERAGE' || item.product?.itemGroup === 'BEVERAGE') { beverageRevenue += amount; beverageCount += quantity; }
+    else { productRevenue += amount; productCount += quantity; }
+  }));
+  const salesRevenue = daySales.reduce((sum, sale) => sum + Number(sale.total || 0), 0);
+  const totals = { CASH: 0, TRANSFER: 0, QR: 0, SOCIOS: 0 };
+  daySales.forEach((sale) => (sale.payments || []).forEach((payment) => { const method = String(payment.method).toUpperCase(); if (method in totals) totals[method] += Number(payment.amount || 0); }));
+  dayMovements.forEach((movement) => { const method = String(movement.paymentMethod).toUpperCase(); if (method in totals) totals[method] += movement.type === 'INCOME' ? Number(movement.amount) : -Number(movement.amount); });
+
+  const addCart = (item, itemType) => setCart((current) => [...current, { itemType, id: item.id, name: item.name, price: Number(item.price), quantity: 1 }]);
+  const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const checkout = async () => {
+    if (!saleBarberId || !cart.length) return alert('Elegí barbero e ítems.');
+    try {
+      const items = cart.map((item) => item.itemType === 'SERVICE' ? { itemType:'SERVICE', serviceId:item.id, quantity:item.quantity } : { itemType:item.itemType, productId:item.id, quantity:item.quantity });
+      await apiRequest('/sales', { method:'POST', body:JSON.stringify({ barberId:Number(saleBarberId), items, payments:[{ method:paymentMethod, amount:cartTotal }] }) }); setCart([]); await loadAll();
+    } catch (error) { alert(error.message); }
+  };
+
+  const submitMovement = async (event) => {
+    event.preventDefault();
+    if (!Number(movementForm.amount)) return;
+    try { await apiRequest('/cash-movements', { method:'POST', body:JSON.stringify({ ...movementForm, amount:Number(movementForm.amount), barberId:movementForm.category === 'Adelanto' ? Number(movementForm.barberId) : null }) }); setCashModal(false); await loadAll(); } catch (error) { alert(error.message); }
+  };
+
+  const openAdvance = (barberId = '') => {
+    setAdvanceForm({ barberId: barberId ? String(barberId) : settlementBarberId, description: '', amount: '', paymentMethod: 'CASH' });
+    setAdvanceModal(true);
+  };
+
+  const submitAdvance = async (event) => {
+    event.preventDefault();
+    if (!advanceForm.barberId || !advanceForm.description.trim() || !Number(advanceForm.amount)) return alert('Completá barbero, motivo y monto.');
+    try {
+      await apiRequest('/cash-movements', { method: 'POST', body: JSON.stringify({
+        type: 'EXPENSE',
+        category: 'Adelanto',
+        description: advanceForm.description.trim(),
+        amount: Number(advanceForm.amount),
+        paymentMethod: advanceForm.paymentMethod,
+        barberId: Number(advanceForm.barberId),
+      }) });
+      const selectedBarberId = Number(advanceForm.barberId);
+      setAdvanceModal(false);
+      setSettlementBarberId(String(selectedBarberId));
+      setPending(await apiRequest(`/settlements/pending/${selectedBarberId}`));
+      await loadAll();
+      const barberName = barbers.find((barber) => barber.id === selectedBarberId)?.displayName || 'Barbero';
+      alert(`Adelanto registrado y aplicado a ${barberName}.`);
+    } catch (error) { alert(error.message); }
+  };
+
+  const deleteSale = async (sale) => {
+    if (!window.confirm('¿Anular esta venta y devolver el stock?')) return;
+    try { await apiRequest(`/sales/${sale.id}`, { method:'DELETE' }); await loadAll(); } catch (error) { alert(error.message); }
+  };
+  const deleteMovement = async (movement) => { if (!window.confirm('¿Eliminar movimiento?')) return; try { await apiRequest(`/cash-movements/${movement.id}`, { method:'DELETE' }); await loadAll(); } catch (error) { alert(error.message); } };
+  const deleteAdvance = async (advance) => {
+    if (!window.confirm('¿Anular este adelanto?')) return;
+    try {
+      await apiRequest(`/cash-movements/${advance.id}`, { method: 'DELETE' }); await loadAll();
+      if (settlementBarberId) setPending(await apiRequest(`/settlements/pending/${settlementBarberId}`));
+    } catch (error) { alert(error.message); }
+  };
+
+  const editBarberCommission = async (barber) => { const value = prompt('Porcentaje de comisión sobre cortes', barber.commissionRate ?? 100); if (value === null) return; try { await apiRequest(`/barbers/${barber.id}`, { method:'PATCH', body:JSON.stringify({ commissionRate:Number(value) }) }); await loadAll(); } catch (error) { alert(error.message); } };
+  const liquidate = async () => { if (!selectedDates.length) return alert('Seleccioná al menos un día'); try { await apiRequest('/settlements', { method:'POST', body:JSON.stringify({ barberId:Number(settlementBarberId), selectedDates }) }); await loadAll(); setSelectedDates([]); } catch (error) { alert(error.message); } };
+
+  const editProduct = async (product) => { const name = prompt('Nombre', product.name); if (name===null) return; const price = prompt('Precio', product.price); if (price===null) return; try { await apiRequest(`/products/${product.id}`, { method:'PATCH', body:JSON.stringify({ name, price:Number(price) }) }); await loadAll(); } catch (error) { alert(error.message); } };
+  const addProduct = async (itemGroup) => { const name = prompt(itemGroup === 'BEVERAGE' ? 'Nombre de la bebida' : 'Nombre del producto'); if (!name) return; const price = prompt('Precio'); if (!price) return; try { await apiRequest('/products', { method:'POST', body:JSON.stringify({ name, categoryName:itemGroup === 'BEVERAGE' ? 'Bebidas' : 'Productos', price:Number(price), costPrice:0, stock:0, minStock:5, itemGroup, commissionRate:0 }) }); await loadAll(); } catch (error) { alert(error.message); } };
+  const adjustStock = async (product, quantity) => { try { await apiRequest(`/products/${product.id}/stock`, { method:'PATCH', body:JSON.stringify({ type:quantity>=0?'IN':'OUT', quantity:Math.abs(quantity), reason:'Ajuste desde panel' }) }); await loadAll(); } catch (error) { alert(error.message); } };
+  const deleteProduct = async (product) => { if (!window.confirm(`¿Eliminar ${product.name}?`)) return; try { await apiRequest(`/products/${product.id}`, { method:'DELETE' }); await loadAll(); } catch (error) { alert(error.message); } };
+
+  const editService = async (service) => { const name=prompt('Nombre',service.name); if(name===null)return; const price=prompt('Precio',service.price); if(price===null)return; const duration=prompt('Duración (minutos)',service.durationMinutes); if(duration===null)return; try { await apiRequest(`/services/${service.id}`,{method:'PATCH',body:JSON.stringify({name,price:Number(price),durationMinutes:Number(duration)})}); await loadAll(); } catch(error){alert(error.message)} };
+  const deleteService = async (service) => { if(!window.confirm(`¿Eliminar o desactivar ${service.name}?`))return; try{await apiRequest(`/services/${service.id}`,{method:'DELETE'});await loadAll()}catch(error){alert(error.message)} };
+  const createService = async (event) => { event.preventDefault(); const form=new FormData(event.currentTarget); try{await apiRequest('/services',{method:'POST',body:JSON.stringify({name:form.get('name'),description:form.get('description'),price:Number(form.get('price')),durationMinutes:Number(form.get('durationMinutes'))})});event.currentTarget.reset();await loadAll()}catch(error){alert(error.message)} };
+  const updatePin = async (action) => { const value=prompt(action.pin?'Nuevo PIN de 4 dígitos':'PIN de 4 dígitos',action.pin||''); if(value===null)return; if(value&&!/\d{4}/.test(value))return alert('El PIN debe tener 4 dígitos'); try{await apiRequest(`/security-pins/${action.actionKey}`,{method:'PATCH',body:JSON.stringify({pin:value||null})});await loadAll()}catch(error){alert(error.message)} };
+
+  const nav = [
+    ['caja','Caja Diaria','Ingresos, egresos y POS',DollarSign], ['balance','Balance por Peluquero','Ganancias y liquidación',Users], ['historial','Historial Ventas','Detalle y anulaciones',History], ['agenda','Agenda','Turnos por barbero',Calendar], ['equipo','Liquidaciones','Comisiones y adelantos',Users], ['stock','Stock','Productos y bebidas',Package], ['analytics','Analytics','Métricas del local',Clock], ['servicios','Servicios','Cortes y precios',Scissors], ['seguridad','Seguridad','PINs protegidos',ShieldCheck]
+  ];
+  const filteredHistory = sales.filter((sale) => historyPeriod === 'ALL' || new Date(sale.createdAt).toLocaleDateString('es-AR') === now.toLocaleDateString('es-AR'));
+  const agendaItems = appointments.filter((appointment) => String(appointment.appointmentDate?.slice(0,10)) === agendaDate);
+  const slots=[]; for(let m=600;m<=1290;m+=30)slots.push(`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`);
+
+  const ownerBarber = barbers.find((barber) => String(barber.displayName).toLowerCase().includes('marcos')) || barbers[0] || null;
+  const employeeBarber = barbers.find((barber) => String(barber.displayName).toLowerCase().includes('gonzalo')) || barbers[1] || null;
+
+  const inBalancePeriod = (dateValue) => {
+    const date = new Date(dateValue);
+    const today = new Date();
+    if (balancePeriod === 'TODAY') return date.toLocaleDateString('es-AR') === today.toLocaleDateString('es-AR');
+    if (balancePeriod === 'WEEK') {
+      const from = new Date(today);
+      from.setDate(today.getDate() - 6);
+      from.setHours(0, 0, 0, 0);
+      return date >= from && date <= today;
     }
-
-    if (apptsRes.status === 'fulfilled') setAppointments(apptsRes.value);
-    else setLoadWarning(`No se pudieron cargar los turnos: ${apptsRes.reason?.message}`);
-
-    if (brbsRes.status === 'fulfilled') {
-      setBarbers(brbsRes.value);
-      if (brbsRes.value.length > 0 && !brbsRes.value.some((b) => b.id === selectedSaleBarberId)) {
-        setSelectedSaleBarberId(user?.barberId || brbsRes.value[0].id);
-      }
-    }
-    if (prodsRes.status === 'fulfilled') setProducts(prodsRes.value);
-    if (movsRes.status === 'fulfilled') setStockMovements(movsRes.value);
-    if (srvsRes.status === 'fulfilled') setServices(srvsRes.value);
-    if (slsRes.status === 'fulfilled') setSales(slsRes.value);
+    if (balancePeriod === 'MONTH') return date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear();
+    return true;
   };
 
-  useEffect(() => {
-    if (token) {
-      if (user?.barberId) setSelectedSaleBarberId(user.barberId);
-      loadAllData();
-    }
-  }, [token]);
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setLoginError('');
-    setLoginLoading(true);
-    try {
-      const data = await apiRequest('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ username, password }),
-      });
-      localStorage.setItem('barber_token', data.token);
-      localStorage.setItem('barber_user', JSON.stringify(data.user));
-      setToken(data.token);
-      setUser(data.user);
-    } catch (err) {
-      setLoginError(err.message);
-    } finally {
-      setLoginLoading(false);
-    }
-  };
-
-  const handleStatusChange = async (id, status) => {
-    try {
-      await apiRequest(`/appointments/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const sendAppointmentToPOS = (appt) => {
-    setLinkedAppointmentId(appt.id);
-    setLinkedCustomerId(appt.customerId);
-    setSelectedSaleBarberId(appt.barberId);
-    setCart([{ itemType: 'SERVICE', serviceId: appt.serviceId, name: appt.service.name, price: Number(appt.priceSnapshot), quantity: 1 }]);
-    setActiveTab('caja');
-  };
-
-  const addToCart = (item, type) => {
-    setCart((prev) => {
-      const idx = prev.findIndex((i) =>
-        type === 'SERVICE' ? i.itemType === 'SERVICE' && i.serviceId === item.id : i.itemType === 'PRODUCT' && i.productId === item.id
-      );
-      if (idx > -1) {
-        const copy = [...prev];
-        copy[idx].quantity += 1;
-        return copy;
-      }
-      return [...prev, {
-        itemType: type,
-        ...(type === 'SERVICE' ? { serviceId: item.id } : { productId: item.id }),
-        name: item.name,
-        price: Number(item.price),
-        quantity: 1,
-      }];
-    });
-  };
-
-  const removeFromCart = (idx) => {
-    setCart((prev) => prev.filter((_, i) => i !== idx));
-  };
-
-  const cartTotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
-
-  const handleCheckout = async () => {
-    if (cart.length === 0) return;
-    try {
-      await apiRequest('/sales', {
-        method: 'POST',
-        body: JSON.stringify({
-          barberId: Number(selectedSaleBarberId),
-          customerId: linkedCustomerId,
-          appointmentId: linkedAppointmentId,
-          items: cart.map((i) => ({
-            itemType: i.itemType,
-            ...(i.serviceId ? { serviceId: i.serviceId } : { productId: i.productId }),
-            quantity: i.quantity,
-          })),
-          payments: [{ method: paymentMethod, amount: cartTotal }],
-        }),
-      });
-      const horaCobro = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-      const barberoNombre = barbers.find((b) => b.id === Number(selectedSaleBarberId))?.displayName || '';
-      setCart([]);
-      setLinkedAppointmentId(null);
-      setLinkedCustomerId(null);
-      setSaleMessage(`¡Anotado a las ${horaCobro} hs (${barberoNombre})!`);
-      setTimeout(() => setSaleMessage(''), 4000);
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleCreateBarber = async (e) => {
-    e.preventDefault();
-    try {
-      await apiRequest('/barbers', { method: 'POST', body: JSON.stringify(newBarber) });
-      setNewBarber({ displayName: '', email: '', password: '', commissionRate: '50' });
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleUpdateCommission = async (barberId, currentRate) => {
-    const nuevo = prompt('Porcentaje que cobra este barbero por corte (ej: 50 o 100):', currentRate);
-    if (!nuevo || isNaN(nuevo) || Number(nuevo) < 0 || Number(nuevo) > 100) return;
-    try {
-      await apiRequest(`/barbers/${barberId}`, { method: 'PATCH', body: JSON.stringify({ commissionRate: Number(nuevo) }) });
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleDeleteSale = async (saleId, label, itemsCount) => {
-    const avisoExtra = itemsCount > 1 ? '\n(Este cobro tiene más de 1 ítem en el mismo ticket y se anulará el ticket completo).' : '';
-    if (!window.confirm(`¿Anular "${label}"? Se descontará de la caja y devolverá el stock si era bebida.${avisoExtra}`)) return;
-    try {
-      await apiRequest(`/sales/${saleId}`, { method: 'DELETE' });
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleAdjustStock = async (productId, type, qty = 1) => {
-    try {
-      await apiRequest(`/products/${productId}/stock`, {
-        method: 'PATCH',
-        body: JSON.stringify({ type, quantity: qty, reason: stockReason.trim() || (type === 'IN' ? 'Reposición rápida' : 'Baja rápida') }),
-      });
-      setStockReason('');
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleCreateProduct = async (e) => {
-    e.preventDefault();
-    try {
-      await apiRequest('/products', { method: 'POST', body: JSON.stringify(newProd) });
-      setNewProd({ name: '', categoryName: 'Bebidas', price: '', costPrice: '', stock: '', minStock: '5' });
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleEditProduct = async (prod) => {
-    const nuevoNombre = prompt('Nombre de la bebida / producto:', prod.name);
-    if (!nuevoNombre || !nuevoNombre.trim()) return;
-    const nuevoPrecio = prompt('Precio de venta ($):', prod.price);
-    if (!nuevoPrecio || isNaN(nuevoPrecio)) return;
-    try {
-      await apiRequest(`/products/${prod.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ name: nuevoNombre.trim(), price: Number(nuevoPrecio) }),
-      });
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleDeleteProduct = async (prod) => {
-    if (!window.confirm(`¿Seguro que querés borrar "${prod.name}" del inventario?`)) return;
-    try {
-      await apiRequest(`/products/${prod.id}`, { method: 'DELETE' });
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleCreateService = async (e) => {
-    e.preventDefault();
-    try {
-      await apiRequest('/services', { method: 'POST', body: JSON.stringify(newSrv) });
-      setNewSrv({ name: '', description: '', price: '', durationMinutes: '30' });
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const handleUpdateServicePrice = async (id, currentPrice) => {
-    const nuevo = prompt('Nuevo precio para este servicio:', currentPrice);
-    if (!nuevo || isNaN(nuevo)) return;
-    try {
-      await apiRequest(`/services/${id}`, { method: 'PATCH', body: JSON.stringify({ price: Number(nuevo) }) });
-      loadAllData();
-    } catch (err) { alert(err.message); }
-  };
-
-  const formatPrice = (val) =>
-    new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val);
-
-  const formatPayMethod = (m) => (m === 'TRANSFER' ? 'Transferencia / MP' : m === 'CARD' ? 'Tarjeta' : 'Efectivo');
-
-  const isTodayLocal = (dateStr) =>
-    new Date(dateStr).toLocaleDateString('es-AR') === now.toLocaleDateString('es-AR');
-
-  if (!token) {
-    return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-8 space-y-6">
-          <button onClick={onBackToPublic} className="text-sm text-zinc-400 hover:text-amber-400 flex items-center gap-1.5 cursor-pointer">
-            <ArrowLeft className="w-4 h-4" /> Volver a la web pública
-          </button>
-          <div className="text-center space-y-2">
-            <img src="/logo.png" alt="Elysium Barber Shop" className="h-24 mx-auto object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-            <h2 className="text-2xl font-bold">Acceso Elysium Barber Shop</h2>
-            <p className="text-xs text-zinc-400">Panel de gestión del local (Marcos y Gonzalo).</p>
-          </div>
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">Usuario</label>
-              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3.5 text-sm focus:outline-none focus:border-amber-500" required />
-            </div>
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">Contraseña</label>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3.5 text-sm focus:outline-none focus:border-amber-500" required />
-            </div>
-            {loginError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs p-3 rounded-xl">{loginError}</div>}
-            <button type="submit" disabled={loginLoading} className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-extrabold py-3.5 rounded-xl transition cursor-pointer text-base">
-              {loginLoading ? 'Ingresando...' : 'Entrar al Panel'}
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  // Datos filtrados para Historial (Cortes y Bebidas)
-  const historySales = sales
-    .filter((s) => (historyPeriod === 'TODAY' ? isTodayLocal(s.createdAt) : true))
-    .filter((s) => (historyBarberFilter === 'ALL' ? true : String(s.barberId) === String(historyBarberFilter)));
-
-  const drinkHistoryRows = [];
-  const cutHistoryRows = [];
-  let histTotalBebidas = 0;
-  let histCantBebidas = 0;
-  let histTotalCortes = 0;
-  let histCantCortes = 0;
-  let histEfectivo = 0;
-  let histTransferencia = 0;
-  let histTarjeta = 0;
-
-  historySales.forEach((s) => {
-    const barberName = s.barber?.displayName || barbers.find((b) => b.id === s.barberId)?.displayName || 'Sin asignar';
-    const method = s.payments?.[0]?.method || 'CASH';
-    const totalSale = Number(s.total || 0);
-    const itemsCount = (s.items || []).length;
-
-    if (method === 'TRANSFER') histTransferencia += totalSale;
-    else if (method === 'CARD') histTarjeta += totalSale;
-    else histEfectivo += totalSale;
-
-    (s.items || []).forEach((it) => {
-      const sub = Number(it.subtotal || 0);
-      if (it.itemType === 'PRODUCT') {
-        histTotalBebidas += sub;
-        histCantBebidas += Number(it.quantity || 1);
-        drinkHistoryRows.push({
-          key: `${s.id}-p-${it.id}`,
-          saleId: s.id,
-          itemsCount,
-          createdAt: s.createdAt,
-          name: it.product?.name || 'Bebida / Producto',
-          quantity: it.quantity,
-          barberName,
-          method,
-          subtotal: sub,
-        });
+  const balanceSales = sales.filter((sale) => inBalancePeriod(sale.createdAt));
+  let marcosCuts = 0, marcosCutRevenue = 0, gonzaloCuts = 0, gonzaloCutRevenue = 0, productRevenuePeriod = 0, productCountPeriod = 0, beverageRevenuePeriod = 0, beverageCountPeriod = 0;
+  balanceSales.forEach((sale) => {
+    (sale.items || []).forEach((item) => {
+      const amount = Number(item.subtotal || 0);
+      const quantity = Number(item.quantity || 1);
+      if (item.itemType === 'SERVICE') {
+        if (ownerBarber && sale.barberId === ownerBarber.id) { marcosCuts += quantity; marcosCutRevenue += amount; }
+        if (employeeBarber && sale.barberId === employeeBarber.id) { gonzaloCuts += quantity; gonzaloCutRevenue += amount; }
+      } else if (item.itemType === 'BEVERAGE' || item.product?.itemGroup === 'BEVERAGE') {
+        beverageRevenuePeriod += amount; beverageCountPeriod += quantity;
       } else {
-        histTotalCortes += sub;
-        histCantCortes += Number(it.quantity || 1);
-        cutHistoryRows.push({
-          key: `${s.id}-s-${it.id}`,
-          saleId: s.id,
-          itemsCount,
-          createdAt: s.createdAt,
-          name: it.service?.name || 'Corte / Servicio',
-          quantity: it.quantity,
-          barberName,
-          method,
-          subtotal: sub,
-        });
+        productRevenuePeriod += amount; productCountPeriod += quantity;
       }
     });
   });
+  const employeeRate = Number(employeeBarber?.commissionRate ?? 50);
+  const ownerGonzaloShare = gonzaloCutRevenue * (100 - employeeRate) / 100;
+  const gonzaloCommission = gonzaloCutRevenue * employeeRate / 100;
+  const periodAdvances = allMovements.filter((movement) => {
+    if (movement.type !== 'EXPENSE' || movement.category !== 'Adelanto' || movement.settled) return false;
+    if (employeeBarber && Number(movement.barberId) !== Number(employeeBarber.id)) return false;
+    return inBalancePeriod(movement.createdAt);
+  });
+  const gonzaloAdvances = periodAdvances.reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
+  const gonzaloNet = gonzaloCommission - gonzaloAdvances;
+  const marcosTotal = marcosCutRevenue + ownerGonzaloShare + productRevenuePeriod + beverageRevenuePeriod;
 
-  const commissionSales = commissionPeriod === 'TODAY' ? sales.filter((s) => isTodayLocal(s.createdAt)) : sales;
-  const cajaHoy = sales.filter((s) => isTodayLocal(s.createdAt)).reduce((acc, s) => acc + Number(s.total || 0), 0);
-  const totalRecaudado = sales.reduce((acc, s) => acc + Number(s.total || 0), 0);
+  return <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col lg:flex-row">
+    <aside className="lg:w-72 shrink-0 bg-zinc-900 border-b lg:border-b-0 lg:border-r border-zinc-800 p-4">
+      <div className="flex items-center gap-3 mb-5"><img src="/logo.png" alt="Elysium" className="h-12 w-12 object-contain rounded-xl border border-amber-500/40 p-1" onError={(e)=>e.currentTarget.style.display='none'} /><div><b className="text-amber-400">ELYSIUM</b><p className="text-xs text-zinc-500">BARBER SHOP</p></div></div>
+      <nav className="grid grid-cols-2 lg:grid-cols-1 gap-2">{nav.map(([id,label,subtitle,Icon]) => <button key={id} onClick={()=>setTab(id)} className={`text-left px-3 py-3 rounded-xl border ${tab===id?'bg-amber-500 text-zinc-950 border-amber-500':'bg-zinc-950 text-zinc-300 border-zinc-800'}`}><span className="flex items-center gap-2"><Icon className="w-4 h-4"/><b className="text-sm">{label}</b></span><span className={`block text-[10px] mt-1 ${tab===id?'text-zinc-700':'text-zinc-500'}`}>{subtitle}</span></button>)}</nav>
+      {onBackToPublic && <button onClick={onBackToPublic} className="mt-4 w-full border border-zinc-700 text-amber-400 py-3 rounded-xl text-sm font-bold">Ver Página de Clientes</button>}<button onClick={logout} className="mt-2 w-full border border-zinc-700 text-zinc-400 py-2.5 rounded-xl text-sm">Cerrar Sesión</button>
+    </aside>
 
-  const visibleAppointments = agendaBarberFilter === 'ALL'
-    ? appointments
-    : appointments.filter((a) => String(a.barberId) === String(agendaBarberFilter));
+    <main className="flex-1 p-4 md:p-6 space-y-6 min-w-0">
+      {tab==='caja' && <div className="space-y-6">
+        <div className="flex flex-wrap justify-between items-center gap-3"><div><h1 className="text-2xl font-extrabold">Caja Diaria</h1><p className="text-xs text-zinc-500">Arqueo, ventas y movimientos</p></div><div className="flex gap-2"><button onClick={()=>setCashDate(localDate(new Date(new Date(`${cashDate}T12:00:00`).setDate(new Date(`${cashDate}T12:00:00`).getDate()-1))))} className="px-3 py-2 border border-zinc-700 rounded-xl">←</button><button onClick={()=>setCashDate(localDate())} className="px-3 py-2 border border-zinc-700 rounded-xl text-sm">Hoy · {new Date(`${cashDate}T12:00:00`).toLocaleDateString('es-AR')}</button><button onClick={()=>setCashDate(localDate(new Date(new Date(`${cashDate}T12:00:00`).setDate(new Date(`${cashDate}T12:00:00`).getDate()+1))))} className="px-3 py-2 border border-zinc-700 rounded-xl">→</button></div></div>
+        <div className="flex flex-wrap gap-2"><button onClick={()=>{setMovementForm({...movementForm,type:'INCOME',category:'Ingreso extra'});setCashModal(true)}} className="bg-emerald-600 px-4 py-2.5 rounded-xl font-bold text-sm">+ Registrar ingreso</button><button onClick={()=>{setMovementForm({...movementForm,type:'EXPENSE',category:'Insumos'});setCashModal(true)}} className="bg-red-500/20 text-red-400 border border-red-500/30 px-4 py-2.5 rounded-xl font-bold text-sm">+ Registrar egreso</button></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{[['CASH','Efectivo'],['TRANSFER','Transferencia'],['QR','QR'],['SOCIOS','Socios']].map(([key,label])=><div key={key} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4"><p className="text-xs text-zinc-400">{label}</p><b className="text-xl">{formatMoney(totals[key])}</b></div>)}</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3"><div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4"><p className="text-xs text-zinc-400">Total facturado</p><b className="text-xl text-amber-400">{formatMoney(salesRevenue)}</b></div><div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-4"><p className="text-xs text-zinc-400">Cortes · {serviceCount}</p><b className="text-xl">{formatMoney(serviceRevenue)}</b></div><div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4"><p className="text-xs text-zinc-400">Productos · {productCount}</p><b className="text-xl">{formatMoney(productRevenue)}</b></div><div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4"><p className="text-xs text-zinc-400">Bebidas · {beverageCount}</p><b className="text-xl">{formatMoney(beverageRevenue)}</b></div></div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4"><div className="flex justify-between mb-3"><h3 className="font-bold">¿Quién realizó el corte o venta?</h3><span className="text-amber-400 font-mono">{now.toLocaleTimeString('es-AR')}</span></div><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{barbers.map((barber)=><button key={barber.id} onClick={()=>setSaleBarberId(String(barber.id))} className={`p-4 rounded-2xl border text-left ${String(saleBarberId)===String(barber.id)?'bg-amber-500 text-zinc-950 border-amber-500':'bg-zinc-950 border-zinc-800'}`}><b className="block text-lg">{barber.displayName}</b><span className="text-xs">Comisión sobre cortes: {barber.commissionRate ?? 100}%</span></button>)}</div></div>
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-5"><div className="xl:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3"><div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4"><h3 className="font-bold mb-3">1. Elegir Corte</h3>{services.map((service)=><button key={service.id} onClick={()=>addCart({id:service.id,name:service.name,price:service.price},'SERVICE')} className="w-full flex justify-between bg-zinc-950 border border-zinc-800 px-3 py-2.5 rounded-xl mb-2 text-sm"><span>{service.name}</span><b>{formatMoney(service.price)}</b></button>)}</div><div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4"><h3 className="font-bold mb-3">2. Sumar Bebida</h3>{products.filter((p)=>p.itemGroup==='BEVERAGE').map((product)=><button key={product.id} onClick={()=>addCart(product,'BEVERAGE')} className="w-full flex justify-between bg-zinc-950 border border-zinc-800 px-3 py-2.5 rounded-xl mb-2 text-sm"><span>{product.name}</span><b>{formatMoney(product.price)}</b></button>)}</div><div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4"><h3 className="font-bold mb-3">3. Sumar Producto</h3>{products.filter((p)=>p.itemGroup==='PRODUCT').map((product)=><button key={product.id} onClick={()=>addCart(product,'PRODUCT')} className="w-full flex justify-between bg-zinc-950 border border-zinc-800 px-3 py-2.5 rounded-xl mb-2 text-sm"><span>{product.name}</span><b>{formatMoney(product.price)}</b></button>)}</div></div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3"><h3 className="font-bold">Ticket</h3><select value={paymentMethod} onChange={(e)=>setPaymentMethod(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"><option value="CASH">Efectivo</option><option value="TRANSFER">Transferencia</option><option value="QR">QR</option><option value="SOCIOS">Socios</option></select><div className="max-h-52 overflow-auto">{cart.map((item,index)=><div key={index} className="flex justify-between py-2 border-b border-zinc-800"><span>{item.quantity}× {item.name}</span><button onClick={()=>setCart((current)=>current.filter((_,i)=>i!==index))} className="text-red-400">Eliminar</button></div>)}</div><div className="flex justify-between"><b>Total</b><b className="text-xl text-amber-400">{formatMoney(cartTotal)}</b></div><button onClick={checkout} disabled={!cart.length} className="w-full bg-amber-500 disabled:opacity-40 text-zinc-950 font-extrabold py-3 rounded-xl">Cobrar</button></div></div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"><h3 className="font-bold mb-3">Movimientos del día</h3>{dayMovements.map((movement)=><div key={movement.id} className="flex justify-between bg-zinc-950 border border-zinc-800 rounded-xl p-3 mb-2"><div><b>{movement.category}</b><span className="text-zinc-400 ml-2">{movement.description}</span></div><div className="flex gap-3"><b>{formatMoney(movement.amount)}</b><button onClick={()=>deleteMovement(movement)} className="text-red-400">Eliminar</button></div></div>)}</div>
+      </div>}
 
-  const navItems = [
-    { id: 'caja', label: 'Anotar Corte', sub: 'Cortes y bebidas', icon: DollarSign },
-    { id: 'historial', label: 'Historial Ventas', sub: 'Bebidas y cortes + hora', icon: History },
-    { id: 'agenda', label: 'Turnos', sub: 'Agenda por barbero', icon: Calendar },
-    { id: 'equipo', label: 'Comisiones (%)', sub: 'Marcos y Gonzalo', icon: Users },
-    { id: 'stock', label: 'Stock y Movs', sub: 'Bebidas y productos', icon: Package },
-    { id: 'servicios', label: 'Precios', sub: 'Cortes y valores', icon: Scissors },
-  ];
-
-  return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col lg:flex-row">
-      <aside className="w-full lg:w-72 bg-zinc-900 border-b lg:border-b-0 lg:border-r border-zinc-800 p-4 flex flex-col justify-between shrink-0">
-        <div className="space-y-5">
-          <div className="flex items-center gap-3 pb-4 border-b border-zinc-800">
-            <img src="/logo.png" alt="Elysium" className="h-12 w-12 object-contain rounded-lg bg-black p-0.5 border border-zinc-700" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-            <div>
-              <h1 className="font-extrabold text-base tracking-wide leading-tight">ELYSIUM</h1>
-              <p className="text-xs text-amber-400 font-semibold">PC Local · {user?.name}</p>
-              <p className="text-xs text-zinc-400">Caja de Hoy: <span className="text-emerald-400 font-bold">{formatPrice(cajaHoy)}</span></p>
-            </div>
-          </div>
-
-          <nav className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2.5">
-            {navItems.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-3.5 px-4 py-3.5 rounded-2xl text-left transition cursor-pointer border ${
-                    isActive ? 'bg-amber-500 text-zinc-950 border-amber-400 shadow-lg shadow-amber-500/10' : 'bg-zinc-950/70 text-zinc-200 border-zinc-800 hover:border-amber-500/50 hover:bg-zinc-800/70'
-                  }`}
-                >
-                  <div className={`p-2 rounded-xl ${isActive ? 'bg-zinc-950/15' : 'bg-zinc-900 text-amber-500'}`}>
-                    <Icon className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <span className="block font-extrabold text-sm leading-tight">{tab.label}</span>
-                    <span className={`block text-xs mt-0.5 ${isActive ? 'text-zinc-900 font-medium' : 'text-zinc-400'}`}>{tab.sub}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </nav>
+      {tab==='balance' && <div className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-extrabold">Balance por Peluquero</h1><p className="text-xs text-zinc-400">Ganancias reales, comisiones y liquidación</p></div><div className="flex flex-wrap gap-2">{[['TODAY','Hoy'],['WEEK','Últimos 7 días'],['MONTH','Este mes'],['ALL','Todo']].map(([key,label])=><button key={key} onClick={()=>setBalancePeriod(key)} className={`px-3.5 py-2 rounded-xl text-xs font-bold ${balancePeriod===key?'bg-amber-500 text-zinc-950':'bg-zinc-900 border border-zinc-800 text-zinc-300'}`}>{label}</button>)}</div></div>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          <div className="bg-gradient-to-br from-amber-500/15 to-zinc-900 border border-amber-500/40 rounded-2xl p-6 space-y-5"><p className="text-xs uppercase tracking-widest text-amber-400 font-bold">Marcos Mayo · Dueño</p><p className="text-4xl font-extrabold text-amber-400">{formatMoney(marcosTotal)}</p><p className="text-xs text-zinc-400">Total general que se lleva Marcos</p><div className="grid grid-cols-2 gap-3"><div className="bg-zinc-950/70 border border-zinc-800 rounded-xl p-4"><p className="text-xs text-zinc-400">Cortes de Marcos</p><b className="block text-xl">{marcosCuts} cortes</b><span className="text-amber-400 text-sm font-bold">{formatMoney(marcosCutRevenue)}</span></div><div className="bg-zinc-950/70 border border-zinc-800 rounded-xl p-4"><p className="text-xs text-zinc-400">Parte por Gonzalo</p><b className="block text-xl">{100-employeeRate}%</b><span className="text-amber-400 text-sm font-bold">{formatMoney(ownerGonzaloShare)}</span></div><div className="bg-zinc-950/70 border border-zinc-800 rounded-xl p-4"><p className="text-xs text-zinc-400">Productos vendidos</p><b className="block text-xl">{productCountPeriod} unidades</b><span className="text-sky-400 text-sm font-bold">{formatMoney(productRevenuePeriod)}</span></div><div className="bg-zinc-950/70 border border-zinc-800 rounded-xl p-4"><p className="text-xs text-zinc-400">Bebidas vendidas</p><b className="block text-xl">{beverageCountPeriod} unidades</b><span className="text-emerald-400 text-sm font-bold">{formatMoney(beverageRevenuePeriod)}</span></div></div></div>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-5"><p className="text-xs uppercase tracking-widest text-sky-400 font-bold">Gonzalo Batalla · Empleado</p><p className="text-4xl font-extrabold text-emerald-400">{formatMoney(gonzaloNet)}</p><p className="text-xs text-zinc-400">Neto final a pagarle</p><div className="grid grid-cols-2 gap-3"><div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"><p className="text-xs text-zinc-400">Cortes realizados</p><b className="text-3xl">{gonzaloCuts}</b></div><div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"><p className="text-xs text-zinc-400">Facturado bruto</p><b className="text-xl">{formatMoney(gonzaloCutRevenue)}</b></div><div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4"><p className="text-xs text-zinc-400">Comisión ({employeeRate}%)</p><b className="text-xl text-sky-400">{formatMoney(gonzaloCommission)}</b></div><div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4"><p className="text-xs text-red-400">Adelantos descontados</p><b className="text-xl text-red-400">− {formatMoney(gonzaloAdvances)}</b></div></div></div>
         </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"><h2 className="font-extrabold mb-4">Comparativa de Cortes por Peluquero</h2><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-zinc-500 border-b border-zinc-800"><th className="py-2">Peluquero</th><th>Cantidad</th><th>Facturación</th><th>Ticket promedio</th><th>Porcentaje</th></tr></thead><tbody>{[ownerBarber,employeeBarber].filter(Boolean).map((barber)=>{const isOwner=barber.id===ownerBarber?.id;const count=isOwner?marcosCuts:gonzaloCuts;const revenue=isOwner?marcosCutRevenue:gonzaloCutRevenue;return <tr key={barber.id} className="border-b border-zinc-800/50"><td className="py-3 font-bold">{barber.displayName}</td><td>{count} cortes</td><td className="text-amber-400 font-bold">{formatMoney(revenue)}</td><td>{count?formatMoney(revenue/count):formatMoney(0)}</td><td>{barber.commissionRate??100}%</td></tr>})}</tbody></table></div></div>
+      </div>}
 
-        <div className="pt-5 mt-5 border-t border-zinc-800 flex flex-col gap-2">
-          <button onClick={loadAllData} className="w-full text-sm font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 py-2.5 rounded-xl transition cursor-pointer">
-            Actualizar Datos
-          </button>
-          <button onClick={onBackToPublic} className="w-full text-sm font-bold bg-zinc-800 hover:bg-zinc-700 py-2.5 rounded-xl transition cursor-pointer">
-            Ver Página de Clientes
-          </button>
-          <button onClick={handleLogout} className="w-full text-sm font-bold bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 py-2.5 rounded-xl flex items-center justify-center gap-2 transition cursor-pointer">
-            <LogOut className="w-4 h-4" /> Cerrar Sesión
-          </button>
-        </div>
-      </aside>
+      {tab==='historial' && <div className="space-y-5"><div className="flex justify-between"><h1 className="text-2xl font-extrabold">Historial de Ventas</h1><div className="flex gap-2"><button onClick={()=>setHistoryPeriod('TODAY')} className={`px-4 py-2 rounded-xl ${historyPeriod==='TODAY'?'bg-amber-500 text-zinc-950':'bg-zinc-900 border border-zinc-800'}`}>Hoy</button><button onClick={()=>setHistoryPeriod('ALL')} className={`px-4 py-2 rounded-xl ${historyPeriod==='ALL'?'bg-amber-500 text-zinc-950':'bg-zinc-900 border border-zinc-800'}`}>Histórico</button></div></div>{['Bebidas','Productos','Cortes'].map((title)=>{const group=title==='Cortes'?'SERVICE':title==='Bebidas'?'BEVERAGE':'PRODUCT';const rows=filteredHistory.flatMap((sale)=>(sale.items||[]).filter((item)=>item.itemType==='SERVICE'?group==='SERVICE':item.itemType==='BEVERAGE'||item.product?.itemGroup==='BEVERAGE'?group==='BEVERAGE':group==='PRODUCT').map((item)=>({sale,item})));return <div key={title} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"><h2 className="font-bold mb-3">Historial de {title}</h2><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-zinc-500 text-left"><th>Fecha</th><th>Detalle</th><th>Barbero</th><th>Pago</th><th>Monto</th><th></th></tr></thead><tbody>{rows.map(({sale,item})=><tr key={`${sale.id}-${item.id}`} className="border-t border-zinc-800"><td className="py-3 text-xs">{new Date(sale.createdAt).toLocaleString('es-AR')}</td><td>{item.description} × {item.quantity}</td><td>{sale.barber?.displayName}</td><td>{sale.payments?.[0]?.method}</td><td className="font-bold text-amber-400">{formatMoney(item.subtotal)}</td><td><button onClick={()=>deleteSale(sale)} className="text-red-400">Anular</button></td></tr>)}</tbody></table></div></div>})}</div>}
 
-      <main className="flex-1 p-5 md:p-8 overflow-y-auto">
-        {loadWarning && <div className="mb-6 bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-4 rounded-xl">{loadWarning}</div>}
+      {tab==='agenda' && <div className="space-y-5"><div className="flex justify-between"><h1 className="text-2xl font-extrabold">Agenda Visual</h1><div className="flex gap-2"><button onClick={()=>setAgendaDate(localDate(new Date(new Date(`${agendaDate}T12:00:00`).setDate(new Date(`${agendaDate}T12:00:00`).getDate()-1))))} className="px-3 py-2 border border-zinc-700 rounded-xl">←</button><button onClick={()=>setAgendaDate(localDate())} className="px-3 py-2 border border-zinc-700 rounded-xl">Hoy</button><button onClick={()=>setAgendaDate(localDate(new Date(new Date(`${agendaDate}T12:00:00`).setDate(new Date(`${agendaDate}T12:00:00`).getDate()+1))))} className="px-3 py-2 border border-zinc-700 rounded-xl">→</button></div></div><div className="grid grid-cols-1 md:grid-cols-2 gap-5">{barbers.map((barber)=>{const items=agendaItems.filter((a)=>String(a.barberId)===String(barber.id));return <div key={barber.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden"><div className="p-4 flex justify-between"><b>{barber.displayName}</b><span className="text-amber-400">{items.length} turnos</span></div><div className="max-h-[720px] overflow-auto">{slots.map((slot)=>{const turn=items.find((a)=>a.startTime===slot);return <div key={slot} className="grid grid-cols-[62px_1fr] min-h-16 border-t border-zinc-800"><span className="text-xs text-zinc-500 p-3 border-r border-zinc-800">{slot}</span><div className="p-2">{turn&&<div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-2"><b>{turn.customer?.firstName} {turn.customer?.lastName}</b><p className="text-xs text-zinc-400">{turn.service?.name}</p><button onClick={()=>{setSaleBarberId(String(barber.id));setTab('caja');addCart({id:turn.serviceId,name:turn.service?.name,price:turn.priceSnapshot},'SERVICE')}} className="text-emerald-400 text-xs mr-3 mt-2">Cobrar</button><button onClick={async()=>{await apiRequest(`/appointments/cancel/${turn.cancellationCode}`,{method:'PATCH'});await loadAll()}} className="text-red-400 text-xs mt-2">Cancelar</button></div>}</div></div>})}</div></div>})}</div></div>}
 
-        {/* PESTAÑA 1: ANOTAR CORTE / BEBIDA */}
-        {activeTab === 'caja' && (
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            <div className="xl:col-span-2 space-y-6">
-              <div className="bg-zinc-900 border border-amber-500/30 rounded-2xl p-5 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="text-sm font-extrabold uppercase tracking-wider text-amber-400">
-                    1. ¿Quién hizo el corte o vendió la bebida?
-                  </label>
-                  <span className="inline-flex items-center gap-1.5 text-xs bg-zinc-950 border border-zinc-800 text-zinc-300 px-3 py-1.5 rounded-xl">
-                    <Clock className="w-3.5 h-3.5 text-amber-400" />
-                    Hora automática: <strong className="text-white">{now.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}</strong>
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {barbers.map((b) => (
-                    <button
-                      type="button"
-                      key={b.id}
-                      onClick={() => setSelectedSaleBarberId(b.id)}
-                      className={`p-4 rounded-xl border text-left transition cursor-pointer ${
-                        Number(selectedSaleBarberId) === b.id
-                          ? 'bg-amber-500 text-zinc-950 border-amber-500 font-bold'
-                          : 'bg-zinc-950 text-zinc-200 border-zinc-800 hover:border-amber-500/50'
-                      }`}
-                    >
-                      <p className="text-base font-extrabold">{b.displayName}</p>
-                      <p className={`text-xs mt-0.5 ${Number(selectedSaleBarberId) === b.id ? 'text-zinc-900 font-semibold' : 'text-zinc-400'}`}>
-                        Porcentaje: {b.commissionRate ?? 100}%
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
+      {tab==='equipo' && <div className="space-y-5"><div className="flex flex-wrap justify-between gap-3"><h1 className="text-2xl font-extrabold">Liquidaciones y Adelantos</h1><div className="flex gap-2"><button onClick={()=>openAdvance(settlementBarberId)} className="bg-red-500/20 text-red-400 border border-red-500/30 px-4 py-2 rounded-xl text-sm font-bold">+ Registrar Adelanto</button><select value={settlementBarberId} onChange={(e)=>setSettlementBarberId(e.target.value)} className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2">
+          {barbers.map((b)=><option key={b.id} value={b.id}>{b.displayName}</option>)}
+        </select></div></div><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{barbers.map((barber)=><div key={barber.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"><div className="flex justify-between"><div><b>{barber.displayName}</b><p className="text-xs text-zinc-400">Comisión: {barber.commissionRate ?? 100}%</p></div><div className="flex gap-2"><button onClick={()=>editBarberCommission(barber)} className="text-amber-400 text-xs">Editar %</button><button onClick={()=>openAdvance(barber.id)} className="text-red-400 text-xs">+ Adelanto</button></div></div></div>)}</div><div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-5"><h3 className="font-bold text-red-400">Adelantos pendientes</h3><b className="text-xl">− {formatMoney(pending.advancesDeducted)}</b>{pending.advances.map((advance)=><div key={advance.id} className="flex items-center justify-between gap-3 mt-2 bg-red-950/20 border border-red-500/20 rounded-xl px-3 py-2"><p className="text-xs text-zinc-300">{new Date(advance.createdAt).toLocaleDateString('es-AR')} · {advance.description || advance.category} · <b>{formatMoney(advance.amount)}</b></p><button onClick={()=>deleteAdvance(advance)} className="text-red-400 text-xs font-bold">Anular</button></div>)}</div><button onClick={()=>setSelectedDates(pending.days.map((day)=>day.date))} className="border border-zinc-700 px-3 py-2 rounded-xl text-sm">Seleccionar todos</button><div className="space-y-3">{pending.days.map((day)=>{const barber=barbers.find((b)=>String(b.id)===String(settlementBarberId));const commission=Number(day.grossAmount||0)*(Number(barber?.commissionRate??100)/100);return <label key={day.date} className="flex gap-3 bg-zinc-900 border border-zinc-800 rounded-xl p-4"><input type="checkbox" checked={selectedDates.includes(day.date)} onChange={(e)=>setSelectedDates((current)=>e.target.checked?[...current,day.date]:current.filter((date)=>date!==day.date))}/><div><b>{new Date(`${day.date}T12:00:00`).toLocaleDateString('es-AR')}</b><p className="text-xs text-zinc-400">{day.servicesCount} servicios · Facturación {formatMoney(day.grossAmount)} · Comisión {formatMoney(commission)}</p></div></label>})}</div><button onClick={liquidate} disabled={!selectedDates.length} className="bg-emerald-500 text-zinc-950 font-extrabold px-5 py-3 rounded-xl disabled:opacity-40">Liquidar selección</button></div>}
 
-              <div>
-                <h3 className="text-sm font-extrabold uppercase tracking-wider text-zinc-400 mb-3">2. Elegir Corte / Servicio</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {services.map((srv) => (
-                    <button key={srv.id} onClick={() => addToCart(srv, 'SERVICE')} className="bg-zinc-900 hover:border-amber-500 border border-zinc-800 p-4 rounded-2xl text-left transition cursor-pointer">
-                      <p className="font-bold text-base">{srv.name}</p>
-                      <p className="text-amber-400 font-extrabold text-base mt-1">{formatPrice(srv.price)}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
+      {tab==='stock' && <div className="grid grid-cols-1 md:grid-cols-2 gap-5">{[['PRODUCT','Productos'],['BEVERAGE','Bebidas']].map(([group,title])=><div key={group}><div className="flex justify-between mb-3"><h2 className="text-xl font-extrabold">{title}</h2><button onClick={()=>addProduct(group)} className="bg-amber-500 text-zinc-950 px-3 py-2 rounded-xl text-sm font-bold">+ Agregar</button></div><div className="space-y-3">{products.filter((p)=>p.itemGroup===group).map((product)=><div key={product.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4"><div className="flex justify-between"><div><b>{product.name}</b><p className="text-xs text-zinc-400">{formatMoney(product.price)}</p></div><span className={`text-xs px-2 py-1 rounded-full ${product.stock>product.minStock?'bg-emerald-500/15 text-emerald-400':'bg-red-500/15 text-red-400'}`}>Stock {product.stock}</span></div><div className="flex flex-wrap gap-2 mt-3"><button onClick={()=>adjustStock(product,-1)} className="px-3 py-1.5 border border-zinc-700 rounded-lg">−1</button><button onClick={()=>adjustStock(product,1)} className="px-3 py-1.5 border border-zinc-700 rounded-lg">+1</button><button onClick={()=>adjustStock(product,6)} className="px-3 py-1.5 border border-zinc-700 rounded-lg">+6 Pack</button><button onClick={()=>editProduct(product)} className="px-3 py-1.5 border border-amber-500/30 text-amber-400 rounded-lg">Editar</button><button onClick={()=>deleteProduct(product)} className="px-3 py-1.5 border border-red-500/30 text-red-400 rounded-lg">Borrar</button></div></div>)}</div></div>)}</div>}
 
-              <div>
-                <h3 className="text-sm font-extrabold uppercase tracking-wider text-zinc-400 mb-3">3. Sumar Bebida / Producto</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {products.map((prod) => (
-                    <button key={prod.id} disabled={prod.stock <= 0} onClick={() => addToCart(prod, 'PRODUCT')} className="bg-zinc-900 hover:border-amber-500 disabled:opacity-40 border border-zinc-800 p-4 rounded-2xl text-left transition cursor-pointer">
-                      <p className="font-bold text-base">{prod.name}</p>
-                      <div className="flex justify-between items-center mt-1">
-                        <span className="text-amber-400 font-extrabold text-base">{formatPrice(prod.price)}</span>
-                        <span className="text-xs text-zinc-400">Stock: {prod.stock}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+      {tab==='servicios' && <div className="grid grid-cols-1 xl:grid-cols-3 gap-5"><div className="xl:col-span-2 space-y-3"><h1 className="text-2xl font-extrabold">Cortes y Precios</h1>{services.map((service)=><div key={service.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex justify-between"><div><b className="text-lg">{service.name}</b><p className="text-xs text-zinc-400">{service.durationMinutes} min</p></div><div className="flex items-center gap-3"><b className="text-amber-400">{formatMoney(service.price)}</b><button onClick={()=>editService(service)} className="text-amber-400 border border-amber-500/30 px-3 py-2 rounded-xl text-sm"><Pencil className="w-4 h-4 inline mr-1"/>Editar</button><button onClick={()=>deleteService(service)} className="text-red-400 border border-red-500/30 px-3 py-2 rounded-xl text-sm"><Trash2 className="w-4 h-4 inline mr-1"/>Eliminar</button></div></div>)}</div><form onSubmit={createService} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3 h-fit"><h2 className="font-bold">Nuevo Corte / Servicio</h2><input name="name" required placeholder="Nombre" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"/><input name="description" placeholder="Descripción" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"/><div className="grid grid-cols-2 gap-3"><input name="price" required type="number" placeholder="Precio" className="bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"/><input name="durationMinutes" required type="number" placeholder="Minutos" className="bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"/></div><button className="w-full bg-amber-500 text-zinc-950 font-extrabold py-3 rounded-xl">Agregar Servicio</button></form></div>}
 
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex flex-col justify-between space-y-5 h-fit">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-bold text-lg flex items-center gap-2"><ShoppingBag className="w-5 h-5 text-amber-500" /> Ticket Actual</h3>
-                  <span className="text-xs bg-amber-500/15 text-amber-400 font-bold px-3 py-1.5 rounded-lg">
-                    {barbers.find((b) => b.id === Number(selectedSaleBarberId))?.displayName || 'Barbero'}
-                  </span>
-                </div>
-                {cart.length === 0 ? (
-                  <p className="text-zinc-500 text-sm py-8 text-center">Tocá un corte o bebida para anotar el cobro.</p>
-                ) : (
-                  <div className="space-y-2.5">
-                    {cart.map((item, idx) => (
-                      <div key={idx} className="flex justify-between items-center bg-zinc-950 p-3.5 rounded-xl text-sm">
-                        <div>
-                          <p className="font-bold">{item.name}</p>
-                          <p className="text-xs text-zinc-400">{item.quantity} x {formatPrice(item.price)}</p>
-                        </div>
-                        <div className="flex items-center gap-2.5">
-                          <span className="font-extrabold text-base">{formatPrice(item.price * item.quantity)}</span>
-                          <button onClick={() => removeFromCart(idx)} className="text-zinc-500 hover:text-red-400 cursor-pointer">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="space-y-4 pt-4 border-t border-zinc-800">
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">Medio de Pago</label>
-                  <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm">
-                    <option value="CASH">Efectivo</option>
-                    <option value="TRANSFER">Transferencia / Mercado Pago</option>
-                    <option value="CARD">Tarjeta Débito / Crédito</option>
-                  </select>
-                </div>
-                <div className="flex justify-between items-center text-xl font-extrabold">
-                  <span>Total:</span>
-                  <span className="text-amber-400">{formatPrice(cartTotal)}</span>
-                </div>
-                {saleMessage && <p className="text-sm text-emerald-400 bg-emerald-500/10 p-3 rounded-xl text-center font-semibold">{saleMessage}</p>}
-                <div className="flex gap-2">
-                  <button onClick={() => { setCart([]); setLinkedAppointmentId(null); }} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-3.5 rounded-xl text-sm font-bold cursor-pointer">Limpiar</button>
-                  <button onClick={handleCheckout} disabled={cart.length === 0} className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold py-3.5 rounded-xl text-base transition cursor-pointer">
-                    Registrar Cobro
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+      {tab==='analytics' && <div className="space-y-5"><h1 className="text-2xl font-extrabold">Analytics</h1>{analytics&&<div className="grid grid-cols-1 md:grid-cols-3 gap-4"><div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"><p className="text-xs text-zinc-400">Facturación total</p><b className="text-2xl text-amber-400">{formatMoney(analytics.totalRevenue)}</b></div><div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"><p className="text-xs text-zinc-400">Ticket promedio</p><b className="text-2xl">{formatMoney(analytics.averageTicket)}</b></div><div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"><p className="text-xs text-zinc-400">Clientes nuevos / frecuentes</p><b className="text-2xl">{analytics.customersAttended.new} / {analytics.customersAttended.frequent}</b></div></div>}</div>}
 
-        {/* PESTAÑA 2: HISTORIAL DE BEBIDAS Y CORTES CON HORA AUTOMÁTICA */}
-        {activeTab === 'historial' && (
-          <div className="space-y-8">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-extrabold">Historial de Bebidas y Cortes</h2>
-                <p className="text-xs text-zinc-400">Cada día arranca en $ 0 automáticamente. Si hubo un error al anotar, podés anular la fila con el tacho rojo.</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex gap-1 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800">
-                  <button onClick={() => setHistoryPeriod('TODAY')} className={`px-3.5 py-2 rounded-lg text-xs font-bold cursor-pointer ${historyPeriod === 'TODAY' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400'}`}>Hoy</button>
-                  <button onClick={() => setHistoryPeriod('ALL')} className={`px-3.5 py-2 rounded-lg text-xs font-bold cursor-pointer ${historyPeriod === 'ALL' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400'}`}>Histórico Total</button>
-                </div>
-                <div className="flex gap-1 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800">
-                  <button onClick={() => setHistoryBarberFilter('ALL')} className={`px-3.5 py-2 rounded-lg text-xs font-bold cursor-pointer ${historyBarberFilter === 'ALL' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400'}`}>Todos</button>
-                  {barbers.map((b) => (
-                    <button key={b.id} onClick={() => setHistoryBarberFilter(String(b.id))} className={`px-3.5 py-2 rounded-lg text-xs font-bold cursor-pointer ${String(historyBarberFilter) === String(b.id) ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400'}`}>
-                      {b.displayName}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+      {tab==='seguridad' && <div className="space-y-4"><h1 className="text-2xl font-extrabold">Seguridad / PINs</h1>{pins.map((action)=><div key={action.actionKey} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex justify-between"><div><b>{action.label}</b><p className="text-xs text-zinc-500">{action.actionKey}</p></div><div className="flex gap-3"><span className={`text-xs px-2 py-1 rounded-full ${action.pin?'bg-emerald-500/15 text-emerald-400':'bg-zinc-800 text-zinc-400'}`}>{action.pin?'Configurada':'Sin configurar'}</span><button onClick={()=>updatePin(action)} className="border border-zinc-700 px-3 py-2 rounded-xl text-sm">Cambiar</button></div></div>)}</div>}
 
-            {/* Tarjetas resumen del período filtrado */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="bg-zinc-900 border border-amber-500/30 rounded-2xl p-4">
-                <p className="text-xs text-amber-400 font-semibold">Bebidas Vendidas ({histCantBebidas})</p>
-                <p className="text-xl font-extrabold text-amber-400 mt-1">{formatPrice(histTotalBebidas)}</p>
-              </div>
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-                <p className="text-xs text-zinc-400 font-semibold">Cortes Hechos ({histCantCortes})</p>
-                <p className="text-xl font-extrabold text-white mt-1">{formatPrice(histTotalCortes)}</p>
-              </div>
-              <div className="bg-zinc-900 border border-emerald-500/30 rounded-2xl p-4">
-                <p className="text-xs text-emerald-400 font-semibold">Efectivo</p>
-                <p className="text-xl font-extrabold text-emerald-400 mt-1">{formatPrice(histEfectivo)}</p>
-              </div>
-              <div className="bg-zinc-900 border border-sky-500/30 rounded-2xl p-4">
-                <p className="text-xs text-sky-400 font-semibold">Transferencia / MP</p>
-                <p className="text-xl font-extrabold text-sky-400 mt-1">{formatPrice(histTransferencia)}</p>
-              </div>
-              <div className="bg-zinc-900 border border-purple-500/30 rounded-2xl p-4">
-                <p className="text-xs text-purple-400 font-semibold">Tarjeta</p>
-                <p className="text-xl font-extrabold text-purple-400 mt-1">{formatPrice(histTarjeta)}</p>
-              </div>
-            </div>
-
-            {/* TABLA A: HISTORIAL DE BEBIDAS VENDIDAS */}
-            <div className="bg-zinc-900 border border-amber-500/30 rounded-2xl p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-bold text-lg text-amber-400">Historial de Ventas de Bebidas / Productos</h3>
-                <span className="text-xs text-zinc-400">{drinkHistoryRows.length} registros</span>
-              </div>
-              {drinkHistoryRows.length === 0 ? (
-                <p className="text-sm text-zinc-500">Todavía no hay bebidas vendidas en este filtro.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-zinc-800 text-xs uppercase text-zinc-400">
-                        <th className="py-3 px-3">Fecha y Hora Exacta</th>
-                        <th className="py-3 px-3">Bebida / Producto</th>
-                        <th className="py-3 px-3">Cant.</th>
-                        <th className="py-3 px-3">Anotado por</th>
-                        <th className="py-3 px-3">Medio de Pago</th>
-                        <th className="py-3 px-3">Monto</th>
-                        <th className="py-3 px-3 text-right">Anular</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800/60">
-                      {drinkHistoryRows.map((row) => (
-                        <tr key={row.key} className="hover:bg-zinc-950/50">
-                          <td className="py-3 px-3 text-xs text-zinc-300 font-mono">
-                            {new Date(row.createdAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} hs
-                          </td>
-                          <td className="py-3 px-3 font-bold text-white">{row.name}</td>
-                          <td className="py-3 px-3 font-semibold">{row.quantity}x</td>
-                          <td className="py-3 px-3 text-zinc-200">{row.barberName}</td>
-                          <td className="py-3 px-3">
-                            <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${row.method === 'CASH' ? 'bg-emerald-500/15 text-emerald-400' : row.method === 'TRANSFER' ? 'bg-sky-500/15 text-sky-400' : 'bg-purple-500/15 text-purple-400'}`}>
-                              {formatPayMethod(row.method)}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 font-extrabold text-amber-400">{formatPrice(row.subtotal)}</td>
-                          <td className="py-3 px-3 text-right">
-                            <button
-                              onClick={() => handleDeleteSale(row.saleId, `${row.quantity}x ${row.name}`, row.itemsCount)}
-                              title="Anular venta equivocada"
-                              className="bg-red-500/10 hover:bg-red-500/25 text-red-400 border border-red-500/30 p-2 rounded-lg transition cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            {/* TABLA B: HISTORIAL DE CORTES REALIZADOS */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-bold text-lg text-white">Historial de Cortes Realizados</h3>
-                <span className="text-xs text-zinc-400">{cutHistoryRows.length} cortes</span>
-              </div>
-              {cutHistoryRows.length === 0 ? (
-                <p className="text-sm text-zinc-500">Todavía no hay cortes anotados en este filtro.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-zinc-800 text-xs uppercase text-zinc-400">
-                        <th className="py-3 px-3">Fecha y Hora Exacta</th>
-                        <th className="py-3 px-3">Corte / Servicio</th>
-                        <th className="py-3 px-3">Barbero</th>
-                        <th className="py-3 px-3">Medio de Pago</th>
-                        <th className="py-3 px-3">Monto</th>
-                        <th className="py-3 px-3 text-right">Anular</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800/60">
-                      {cutHistoryRows.map((row) => (
-                        <tr key={row.key} className="hover:bg-zinc-950/50">
-                          <td className="py-3 px-3 text-xs text-zinc-300 font-mono">
-                            {new Date(row.createdAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} hs
-                          </td>
-                          <td className="py-3 px-3 font-bold text-white">{row.name} {row.quantity > 1 ? `(${row.quantity}x)` : ''}</td>
-                          <td className="py-3 px-3 font-semibold text-amber-400">{row.barberName}</td>
-                          <td className="py-3 px-3">
-                            <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${row.method === 'CASH' ? 'bg-emerald-500/15 text-emerald-400' : row.method === 'TRANSFER' ? 'bg-sky-500/15 text-sky-400' : 'bg-purple-500/15 text-purple-400'}`}>
-                              {formatPayMethod(row.method)}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 font-extrabold text-emerald-400">{formatPrice(row.subtotal)}</td>
-                          <td className="py-3 px-3 text-right">
-                            <button
-                              onClick={() => handleDeleteSale(row.saleId, `${row.name} (${row.barberName})`, row.itemsCount)}
-                              title="Anular corte equivocado"
-                              className="bg-red-500/10 hover:bg-red-500/25 text-red-400 border border-red-500/30 p-2 rounded-lg transition cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* PESTAÑA 3: AGENDA POR PELUQUERO */}
-        {activeTab === 'agenda' && (
-          <div className="space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-extrabold">Turnos Agendados ({visibleAppointments.length})</h2>
-                <p className="text-sm text-zinc-400">Filtrá por barbero para ver los turnos de cada uno.</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 bg-zinc-900 p-2 rounded-2xl border border-zinc-800">
-                <button onClick={() => setAgendaBarberFilter('ALL')} className={`px-4 py-2.5 rounded-xl text-sm font-bold transition cursor-pointer ${agendaBarberFilter === 'ALL' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-300 hover:text-white'}`}>
-                  Todos ({appointments.length})
-                </button>
-                {barbers.map((b) => (
-                  <button key={b.id} onClick={() => setAgendaBarberFilter(String(b.id))} className={`px-4 py-2.5 rounded-xl text-sm font-bold transition cursor-pointer ${String(agendaBarberFilter) === String(b.id) ? 'bg-amber-500 text-zinc-950' : 'text-zinc-300 hover:text-white'}`}>
-                    {b.displayName} ({appointments.filter((a) => a.barberId === b.id).length})
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {visibleAppointments.length === 0 ? (
-              <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-12 text-center text-zinc-400 text-base">
-                No hay turnos registrados para este filtro.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                {visibleAppointments.map((appt) => (
-                  <div key={appt.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-bold bg-zinc-800 px-3 py-1 rounded-lg text-amber-400">
-                        {appt.appointmentDate.split('T')[0]} · {appt.startTime} hs
-                      </span>
-                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${appt.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' : appt.status === 'CANCELLED' ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400'}`}>
-                        {appt.status}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs bg-zinc-950 px-3 py-2 rounded-xl border border-zinc-800/80">
-                      <span className="text-zinc-400">Barbero:</span>
-                      <span className="font-bold text-white text-sm">{appt.barber.displayName}</span>
-                    </div>
-                    <div>
-                      <p className="font-bold text-lg">{appt.customer.firstName} {appt.customer.lastName}</p>
-                      <p className="text-xs text-zinc-400">WhatsApp: {appt.customer.whatsapp}</p>
-                      <p className="text-sm text-zinc-200 mt-1.5 font-medium">{appt.service.name} ({formatPrice(appt.priceSnapshot)})</p>
-                      {appt.notes && <p className="text-xs text-amber-300/90 mt-1">Nota: {appt.notes}</p>}
-                    </div>
-                    {appt.status === 'CONFIRMED' && (
-                      <div className="pt-3 border-t border-zinc-800 flex gap-2">
-                        <button onClick={() => sendAppointmentToPOS(appt)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold py-2.5 px-3 rounded-xl transition cursor-pointer">
-                          Cobrar en Caja
-                        </button>
-                        <button onClick={() => handleStatusChange(appt.id, 'CANCELLED')} className="bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 text-sm font-semibold py-2.5 px-3 rounded-xl transition cursor-pointer">
-                          Cancelar
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* PESTAÑA 4: COMISIONES (%) */}
-        {activeTab === 'equipo' && (
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            <div className="xl:col-span-2 space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-2xl font-extrabold">Liquidación por Barbero</h2>
-                  <p className="text-xs text-zinc-400">En "Hoy" arranca en $ 0 cada día. El porcentaje se calcula sobre los cortes (las bebidas quedan 100% para el local).</p>
-                </div>
-                <div className="flex gap-1.5 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800">
-                  <button onClick={() => setCommissionPeriod('TODAY')} className={`px-4 py-2 rounded-lg text-xs font-bold cursor-pointer ${commissionPeriod === 'TODAY' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400'}`}>Hoy</button>
-                  <button onClick={() => setCommissionPeriod('ALL')} className={`px-4 py-2 rounded-lg text-xs font-bold cursor-pointer ${commissionPeriod === 'ALL' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400'}`}>Histórico Total</button>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {barbers.map((barber) => {
-                  const barberSales = commissionSales.filter((s) => s.barberId === barber.id);
-                  let cutsCount = 0; let servicesRevenue = 0; let productsRevenue = 0;
-                  barberSales.forEach((s) => (s.items || []).forEach((it) => {
-                    if (it.itemType === 'SERVICE') { cutsCount += it.quantity; servicesRevenue += Number(it.subtotal || 0); }
-                    else { productsRevenue += Number(it.subtotal || 0); }
-                  }));
-                  const rate = barber.commissionRate ?? 100;
-                  const barberCut = (servicesRevenue * rate) / 100;
-                  const shopCut = servicesRevenue - barberCut + productsRevenue;
-                  return (
-                    <div key={barber.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <h3 className="font-extrabold text-xl text-white">{barber.displayName}</h3>
-                          <p className="text-xs text-zinc-400">{barber.user?.email}</p>
-                        </div>
-                        <button onClick={() => handleUpdateCommission(barber.id, rate)} className="text-xs bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 font-bold px-3 py-2 rounded-xl cursor-pointer">
-                          Cobra {rate}% (Editar)
-                        </button>
-                      </div>
-                      <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-2.5 text-sm">
-                        <div className="flex justify-between"><span className="text-zinc-400">Cortes realizados:</span><span className="font-bold">{cutsCount}</span></div>
-                        <div className="flex justify-between"><span className="text-zinc-400">Total en cortes:</span><span className="font-semibold">{formatPrice(servicesRevenue)}</span></div>
-                        <div className="flex justify-between"><span className="text-zinc-400">Bebidas anotadas:</span><span className="font-semibold">{formatPrice(productsRevenue)}</span></div>
-                        <div className="pt-2.5 border-t border-zinc-800 flex justify-between text-base font-extrabold">
-                          <span className="text-emerald-400">Le corresponde ({rate}%):</span>
-                          <span className="text-emerald-400">{formatPrice(barberCut)}</span>
-                        </div>
-                        <div className="flex justify-between text-xs text-zinc-400"><span>Queda para Elysium:</span><span>{formatPrice(shopCut)}</span></div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            <form onSubmit={handleCreateBarber} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4 h-fit">
-              <h3 className="font-bold text-lg">Agregar Otro Barbero</h3>
-              <input type="text" placeholder="Nombre y Apellido" value={newBarber.displayName} onChange={(e) => setNewBarber({ ...newBarber, displayName: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
-              <input type="email" placeholder="Email de acceso" value={newBarber.email} onChange={(e) => setNewBarber({ ...newBarber, email: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
-              <input type="password" placeholder="Contraseña" value={newBarber.password} onChange={(e) => setNewBarber({ ...newBarber, password: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Porcentaje por corte (%)</label>
-                <input type="number" min="1" max="100" value={newBarber.commissionRate} onChange={(e) => setNewBarber({ ...newBarber, commissionRate: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
-              </div>
-              <button type="submit" className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-extrabold py-3.5 rounded-xl text-sm transition cursor-pointer">Dar de Alta Barbero</button>
-            </form>
-          </div>
-        )}
-
-        {/* PESTAÑA 5: STOCK Y MOVIMIENTOS */}
-        {activeTab === 'stock' && (
-          <div className="space-y-8">
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-              <div className="xl:col-span-2 space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-2xl font-extrabold">Inventario Actual</h2>
-                  <input type="text" placeholder="Motivo opcional antes de sumar/restar..." value={stockReason} onChange={(e) => setStockReason(e.target.value)} className="bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm w-72" />
-                </div>
-                <div className="space-y-3">
-                  {products.map((prod) => {
-                    const isLow = prod.stock <= prod.minStock;
-                    return (
-                      <div key={prod.id} className={`bg-zinc-900 border rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4 ${isLow ? 'border-red-500/40' : 'border-zinc-800'}`}>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-bold text-lg">{prod.name}</h3>
-                            <span className="text-xs bg-zinc-800 text-zinc-400 px-2.5 py-0.5 rounded">{prod.category?.name}</span>
-                            {isLow && <span className="inline-flex items-center gap-1 text-xs text-red-400 bg-red-500/10 px-2.5 py-0.5 rounded font-semibold"><AlertTriangle className="w-3.5 h-3.5" /> Stock bajo</span>}
-                          </div>
-                          <p className="text-sm text-zinc-400 mt-1">Venta: <span className="text-amber-400 font-bold">{formatPrice(prod.price)}</span> · Costo: {formatPrice(prod.costPrice)}</p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button onClick={() => handleAdjustStock(prod.id, 'OUT', 1)} title="Restar 1" className="bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 border border-zinc-700 p-2.5 rounded-xl transition cursor-pointer"><Minus className="w-4 h-4" /></button>
-                          <span className="w-12 text-center font-extrabold text-xl">{prod.stock}</span>
-                          <button onClick={() => handleAdjustStock(prod.id, 'IN', 1)} title="Sumar 1" className="bg-zinc-800 hover:bg-emerald-500/20 hover:text-emerald-400 border border-zinc-700 p-2.5 rounded-xl transition cursor-pointer"><Plus className="w-4 h-4" /></button>
-                          <button onClick={() => handleAdjustStock(prod.id, 'IN', 6)} className="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3 py-2.5 rounded-xl transition cursor-pointer">+6 Pack</button>
-                          <button onClick={() => handleEditProduct(prod)} title="Editar nombre o precio" className="bg-zinc-800 hover:bg-amber-500/20 hover:text-amber-400 border border-zinc-700 p-2.5 rounded-xl transition cursor-pointer"><Pencil className="w-4 h-4" /></button>
-                          <button onClick={() => handleDeleteProduct(prod)} title="Borrar producto" className="bg-red-500/10 hover:bg-red-500/25 text-red-400 border border-red-500/30 p-2.5 rounded-xl transition cursor-pointer"><Trash2 className="w-4 h-4" /></button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              <form onSubmit={handleCreateProduct} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4 h-fit">
-                <h3 className="font-bold text-lg">Agregar Producto Nuevo</h3>
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1">Nombre del producto / bebida</label>
-                  <input type="text" placeholder="Ej: Speed, Cerveza Corona, Cera..." value={newProd.name} onChange={(e) => setNewProd({ ...newProd, name: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
-                </div>
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1">Categoría</label>
-                  <input type="text" placeholder="Bebidas, Styling..." value={newProd.categoryName} onChange={(e) => setNewProd({ ...newProd, categoryName: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1">Precio Venta ($)</label>
-                    <input type="number" placeholder="Ej: 2500" value={newProd.price} onChange={(e) => setNewProd({ ...newProd, price: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1">Costo Compra ($)</label>
-                    <input type="number" placeholder="Ej: 1200" value={newProd.costPrice} onChange={(e) => setNewProd({ ...newProd, costPrice: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1">Stock Inicial</label>
-                    <input type="number" placeholder="Ej: 12" value={newProd.stock} onChange={(e) => setNewProd({ ...newProd, stock: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1">Alerta Stock Bajo</label>
-                    <input type="number" placeholder="Ej: 5" value={newProd.minStock} onChange={(e) => setNewProd({ ...newProd, minStock: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" />
-                  </div>
-                </div>
-                <button type="submit" className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-extrabold py-3.5 rounded-xl text-sm transition cursor-pointer">Guardar Producto</button>
-              </form>
-            </div>
-
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-bold text-lg flex items-center gap-2"><History className="w-5 h-5 text-amber-500" /> Historial de Movimientos de Stock</h3>
-                <span className="text-xs text-zinc-400">Últimos {stockMovements.length} movimientos</span>
-              </div>
-              {stockMovements.length === 0 ? (
-                <p className="text-sm text-zinc-500">Todavía no hay movimientos registrados.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-zinc-800 text-xs uppercase text-zinc-400">
-                        <th className="py-3 px-3">Fecha y Hora</th>
-                        <th className="py-3 px-3">Producto</th>
-                        <th className="py-3 px-3">Movimiento</th>
-                        <th className="py-3 px-3">Cantidad</th>
-                        <th className="py-3 px-3">Motivo</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800/60">
-                      {stockMovements.map((mov) => (
-                        <tr key={mov.id} className="hover:bg-zinc-950/50">
-                          <td className="py-3 px-3 text-xs text-zinc-400">
-                            {new Date(mov.createdAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                          </td>
-                          <td className="py-3 px-3 font-semibold text-white">{mov.product?.name}</td>
-                          <td className="py-3 px-3">
-                            {mov.type === 'IN' ? (
-                              <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full"><ArrowUpRight className="w-3.5 h-3.5" /> Entrada</span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-xs font-bold text-red-400 bg-red-500/10 px-2.5 py-0.5 rounded-full"><ArrowDownLeft className="w-3.5 h-3.5" /> Salida</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-3 font-extrabold">{mov.type === 'IN' ? `+${mov.quantity}` : `-${mov.quantity}`}</td>
-                          <td className="py-3 px-3 text-zinc-300 text-xs">{mov.reason}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* PESTAÑA 6: PRECIOS */}
-        {activeTab === 'servicios' && (
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            <div className="xl:col-span-2 space-y-3">
-              <h2 className="text-2xl font-extrabold">Cortes y Precios</h2>
-              {services.map((srv) => (
-                <div key={srv.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex items-center justify-between">
-                  <div>
-                    <h3 className="font-bold text-lg">{srv.name}</h3>
-                    <p className="text-xs text-zinc-400">{srv.description} · {srv.durationMinutes} min</p>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <span className="font-extrabold text-amber-400 text-lg">{formatPrice(srv.price)}</span>
-                    <button onClick={() => handleUpdateServicePrice(srv.id, srv.price)} className="text-sm font-bold bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl transition cursor-pointer">Cambiar Precio</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <form onSubmit={handleCreateService} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4 h-fit">
-              <h3 className="font-bold text-lg">Nuevo Corte / Servicio</h3>
-              <input type="text" placeholder="Nombre (ej: Corte + Barba)" value={newSrv.name} onChange={(e) => setNewSrv({ ...newSrv, name: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
-              <input type="text" placeholder="Descripción corta" value={newSrv.description} onChange={(e) => setNewSrv({ ...newSrv, description: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" />
-              <div className="grid grid-cols-2 gap-3">
-                <input type="number" placeholder="Precio ($)" value={newSrv.price} onChange={(e) => setNewSrv({ ...newSrv, price: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
-                <input type="number" placeholder="Minutos (30, 45...)" value={newSrv.durationMinutes} onChange={(e) => setNewSrv({ ...newSrv, durationMinutes: e.target.value })} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-3 text-sm" required />
-              </div>
-              <button type="submit" className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-extrabold py-3.5 rounded-xl text-sm transition cursor-pointer">Agregar Servicio</button>
-            </form>
-          </div>
-        )}
-      </main>
-    </div>
-  );
+      {cashModal && <div className="fixed inset-0 z-50 bg-black/70 grid place-items-center p-4"><form onSubmit={submitMovement} className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3"><h3 className="font-extrabold text-xl">Registrar movimiento</h3><select value={movementForm.category} onChange={(e)=>setMovementForm({...movementForm,category:e.target.value})} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"><option>Adelanto</option><option>Insumos</option><option>Servicios</option><option>Ingreso extra</option><option>Otros</option></select>{movementForm.category==='Adelanto'&&<><select value={movementForm.barberId} onChange={(e)=>setMovementForm({...movementForm,barberId:e.target.value})} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"><option value="">Elegir barbero</option>{barbers.map((b)=><option key={b.id} value={b.id}>{b.displayName}</option>)}</select><p className="text-xs text-red-400">Se descuenta de la próxima liquidación.</p></>}<input value={movementForm.description} onChange={(e)=>setMovementForm({...movementForm,description:e.target.value})} placeholder="Descripción" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"/><input type="number" value={movementForm.amount} onChange={(e)=>setMovementForm({...movementForm,amount:e.target.value})} placeholder="Monto" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"/><select value={movementForm.paymentMethod} onChange={(e)=>setMovementForm({...movementForm,paymentMethod:e.target.value})} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"><option>CASH</option><option>TRANSFER</option><option>QR</option><option>SOCIOS</option></select><div className="flex gap-2"><button type="button" onClick={()=>setCashModal(false)} className="flex-1 border border-zinc-700 py-3 rounded-xl">Cancelar</button><button className="flex-1 bg-amber-500 text-zinc-950 font-extrabold py-3 rounded-xl">Guardar</button></div></form></div>}
+      {advanceModal && <div className="fixed inset-0 z-50 bg-black/70 grid place-items-center p-4"><form onSubmit={submitAdvance} className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3"><h3 className="font-extrabold text-xl">Registrar adelanto</h3><select value={advanceForm.barberId} onChange={(e)=>setAdvanceForm({...advanceForm,barberId:e.target.value})} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"><option value="">Elegir barbero</option>{barbers.map((b)=><option key={b.id} value={b.id}>{b.displayName}</option>)}</select><input value={advanceForm.description} onChange={(e)=>setAdvanceForm({...advanceForm,description:e.target.value})} placeholder="Descripción" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"/><input type="number" value={advanceForm.amount} onChange={(e)=>setAdvanceForm({...advanceForm,amount:e.target.value})} placeholder="Monto" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"/><select value={advanceForm.paymentMethod} onChange={(e)=>setAdvanceForm({...advanceForm,paymentMethod:e.target.value})} className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5"><option>CASH</option><option>TRANSFER</option><option>QR</option><option>SOCIOS</option></select><div className="flex gap-2"><button type="button" onClick={()=>setAdvanceModal(false)} className="flex-1 border border-zinc-700 py-3 rounded-xl">Cancelar</button><button className="flex-1 bg-amber-500 text-zinc-950 font-extrabold py-3 rounded-xl">Guardar</button></div></form></div>}
+    </main>
+  </div>;
 }
+  
