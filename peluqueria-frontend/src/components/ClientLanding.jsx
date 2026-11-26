@@ -167,9 +167,9 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
       return 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=800&q=80';
     }
     if (name.includes('niño') || name.includes('nino')) {
-      return 'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?auto=format&fit=crop&w=800&q=80';
+      return 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&w=800&q=80';
     }
-    return 'https://images.unsplash.com/photo-1585747860715-2ba37e788b70?auto=format&fit=crop&w=800&q=80';
+    return 'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?auto=format&fit=crop&w=800&q=80';
   };
 
   return (
@@ -349,10 +349,10 @@ export default function ClientLanding({ onOpenAdmin, onGoAdmin }) {
                         className={`overflow-hidden rounded-2xl border text-left transition cursor-pointer ${String(selectedServiceId) === String(service.id) ? 'border-amber-500 bg-amber-500/5' : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700'}`}
                       >
                         <img
-                          src={getServiceImage(service.name)}
+                          src={service.imageUrl || getServiceImage(service.name)}
                           alt={service.name}
                           className="h-32 w-full object-cover object-top opacity-90"
-                          onError={(event) => { event.currentTarget.src = '/hero.png'; }}
+                          onError={(event) => { event.currentTarget.src = getServiceImage(service.name); }}
                         />
                         <div className="p-4 flex items-start justify-between gap-3">
                           <div>

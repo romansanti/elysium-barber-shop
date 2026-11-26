@@ -16,8 +16,8 @@ const getServices = async (req, res) => {
 
 const createService = async (req, res) => {
   try {
-    const { name, description, price, durationMinutes } = req.body;
-    if (!name || !price || !durationMinutes) {
+    const { name, description, price, durationMinutes, imageUrl } = req.body;
+    if (!name || price === undefined || !durationMinutes) {
       return res.status(400).json({ error: 'Nombre, precio y duración son obligatorios.' });
     }
     const service = await prisma.service.create({
@@ -25,7 +25,8 @@ const createService = async (req, res) => {
         name,
         description: description || '',
         price: Number(price),
-        durationMinutes: parseInt(durationMinutes)
+        durationMinutes: parseInt(durationMinutes),
+        imageUrl: imageUrl ? String(imageUrl).trim() : null,
       }
     });
     res.status(201).json(service);
@@ -38,7 +39,7 @@ const createService = async (req, res) => {
 const updateService = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, price, durationMinutes, active, isActive } = req.body;
+    const { name, description, price, durationMinutes, active, isActive, imageUrl } = req.body;
     const updated = await prisma.service.update({
       where: { id: parseInt(id) },
       data: {
@@ -46,6 +47,7 @@ const updateService = async (req, res) => {
         ...(description !== undefined && { description }),
         ...(price !== undefined && { price: Number(price) }),
         ...(durationMinutes !== undefined && { durationMinutes: parseInt(durationMinutes) }),
+        ...(imageUrl !== undefined && { imageUrl: imageUrl ? String(imageUrl).trim() : null }),
         ...(active !== undefined && { active: Boolean(active) }),
         ...(isActive !== undefined && { active: Boolean(isActive) })
       }

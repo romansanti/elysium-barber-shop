@@ -1,1 +1,16 @@
 @import "tailwindcss";
+
+button,
+a,
+select,
+[role="button"],
+input[type="checkbox"],
+input[type="submit"] {
+  cursor: pointer;
+}
+
+button:disabled,
+input:disabled,
+select:disabled {
+  cursor: not-allowed;
+}

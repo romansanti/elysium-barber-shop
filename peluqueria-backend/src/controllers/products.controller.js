@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const transactionOptions = { maxWait: 10000, timeout: 20000 };
 
 // Obtener productos activos y últimos movimientos de stock
 const getProducts = async (req, res) => {
@@ -123,7 +124,7 @@ const adjustStock = async (req, res) => {
       });
 
       return updated;
-    });
+    }, transactionOptions);
 
     res.json(updatedProduct);
   } catch (error) {
@@ -161,7 +162,7 @@ const deleteProduct = async (req, res) => {
     await prisma.$transaction([
       prisma.stockMovement.deleteMany({ where: { productId: id } }),
       prisma.product.delete({ where: { id } }),
-    ]);
+    ], transactionOptions);
     res.json({ message: 'Producto eliminado correctamente' });
   } catch (err) {
     if (err.code === 'P2003') {

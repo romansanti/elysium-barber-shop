@@ -23,8 +23,8 @@ model User {
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
 
-  role         Role     @relation(fields: [roleId], references: [id])
-  barber       Barber?
+  role   Role    @relation(fields: [roleId], references: [id])
+  barber Barber?
 }
 
 model Barber {
@@ -54,12 +54,13 @@ model Customer {
 }
 
 model Service {
-  id              Int      @id @default(autoincrement())
-  name            String   @db.VarChar(100)
-  description     String?  @db.Text
-  price           Decimal  @db.Decimal(10, 2)
+  id              Int     @id @default(autoincrement())
+  name            String  @db.VarChar(100)
+  description     String? @db.Text
+  price           Decimal @db.Decimal(10, 2)
   durationMinutes Int
-  active          Boolean  @default(true)
+  imageUrl        String? @db.Text
+  active          Boolean @default(true)
 
   appointments Appointment[]
   saleItems    SaleItem[]
@@ -222,16 +223,16 @@ model CashMovement {
 }
 
 model Settlement {
-  id                 Int      @id @default(autoincrement())
-  barberId           Int
-  dateFrom           String?  @db.VarChar(10)
-  dateTo             String?  @db.VarChar(10)
-  servicesCount      Int
-  grossAmount        Float
-  commissionAmount   Float
-  advancesDeducted   Float
-  netPaid            Float
-  createdAt          DateTime @default(now())
+  id               Int      @id @default(autoincrement())
+  barberId         Int
+  dateFrom         String?  @db.VarChar(10)
+  dateTo           String?  @db.VarChar(10)
+  servicesCount    Int
+  grossAmount      Float
+  commissionAmount Float
+  advancesDeducted Float
+  netPaid          Float
+  createdAt        DateTime @default(now())
 }
 
 model SecurityPin {

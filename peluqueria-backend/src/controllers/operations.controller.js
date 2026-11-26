@@ -1,6 +1,8 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+const transactionOptions = { maxWait: 10000, timeout: 20000 };
+
 const validMethods = ['CASH', 'TRANSFER', 'QR', 'SOCIOS'];
 
 const getCashMovements = async (req, res) => {
@@ -29,6 +31,13 @@ const createCashMovement = async (req, res) => {
     if (!validMethods.includes(String(paymentMethod).toUpperCase())) return res.status(400).json({ error: 'Medio de pago inválido' });
     if (!category || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) return res.status(400).json({ error: 'Datos de movimiento incompletos' });
 
+    const isAdvance = type === 'EXPENSE' && String(category).toLowerCase() === 'adelanto';
+    if (isAdvance) {
+      if (!normalizedBarberId) return res.status(400).json({ error: 'El adelanto requiere seleccionar un peluquero.' });
+      const barber = await prisma.barber.findFirst({ where: { id: normalizedBarberId, active: true, user: { active: true } } });
+      if (!barber) return res.status(400).json({ error: 'Peluquero no válido o desactivado.' });
+    }
+
     const movement = await prisma.cashMovement.create({
       data: {
         type,
@@ -36,11 +45,14 @@ const createCashMovement = async (req, res) => {
         description: description || null,
         amount: normalizedAmount,
         paymentMethod: String(paymentMethod).toUpperCase(),
-        barberId: normalizedBarberId,
+        barberId: isAdvance ? normalizedBarberId : normalizedBarberId,
+        settled: false,
+        settlementId: null,
       },
     });
     res.status(201).json(movement);
   } catch (error) {
+    console.error(error);
     res.status(500).json({ error: 'Error al registrar movimiento de caja' });
   }
 };
@@ -102,7 +114,7 @@ const getPendingSettlement = async (req, res) => {
 
 const createSettlement = async (req, res) => {
   try {
-    const { barberId, selectedDates } = req.body;
+    const { barberId, selectedDates, selectedAdvanceIds } = req.body;
     if (!barberId || !Array.isArray(selectedDates) || selectedDates.length === 0) {
       return res.status(400).json({ error: 'barberId y selectedDates son obligatorios' });
     }
@@ -133,9 +145,14 @@ const createSettlement = async (req, res) => {
         }
       }
 
-      const advances = await tx.cashMovement.findMany({
-        where: { barberId: Number(barberId), type: 'EXPENSE', category: 'Adelanto', settled: false },
-      });
+      const advanceIds = Array.isArray(selectedAdvanceIds)
+        ? selectedAdvanceIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+        : [];
+      const advances = advanceIds.length
+        ? await tx.cashMovement.findMany({
+            where: { id: { in: advanceIds }, barberId: Number(barberId), type: 'EXPENSE', category: 'Adelanto', settled: false },
+          })
+        : [];
       const advancesDeducted = advances.reduce((sum, advance) => sum + Number(advance.amount), 0);
 
       const settlement = await tx.settlement.create({
@@ -155,12 +172,14 @@ const createSettlement = async (req, res) => {
         await tx.sale.update({ where: { id: sale.id }, data: { settled: true, settlementId: settlement.id } });
         await tx.saleItem.updateMany({ where: { saleId: sale.id }, data: { settled: true, settlementId: settlement.id } });
       }
-      await tx.cashMovement.updateMany({
-        where: { id: { in: advances.map((a) => a.id) } },
-        data: { settled: true, settlementId: settlement.id },
-      });
+      if (advances.length) {
+        await tx.cashMovement.updateMany({
+          where: { id: { in: advances.map((a) => a.id) } },
+          data: { settled: true, settlementId: settlement.id },
+        });
+      }
       return settlement;
-    });
+    }, transactionOptions);
 
     res.status(201).json(result);
   } catch (error) {

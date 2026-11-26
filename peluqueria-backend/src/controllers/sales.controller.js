@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const transactionOptions = { maxWait: 10000, timeout: 20000 };
 
 // Listar todas las ventas con su detalle
 const getSales = async (req, res) => {
@@ -97,7 +98,7 @@ const createSale = async (req, res) => {
         await tx.appointment.update({ where: { id: parseInt(appointmentId) }, data: { status: 'COMPLETED' } });
       }
       return createdSale;
-    });
+    }, transactionOptions);
 
     res.status(201).json(sale);
   } catch (error) {
@@ -141,7 +142,7 @@ const deleteSale = async (req, res) => {
       await tx.payment.deleteMany({ where: { saleId } });
       await tx.saleItem.deleteMany({ where: { saleId } });
       await tx.sale.delete({ where: { id: saleId } });
-    });
+    }, transactionOptions);
 
     res.json({ message: 'Venta anulada' });
   } catch (error) {

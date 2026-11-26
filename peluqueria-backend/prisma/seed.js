@@ -4,69 +4,95 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Iniciando carga de datos...');
 
-  // 1. Crear Roles
   const adminRole = await prisma.role.upsert({
     where: { name: 'ADMIN' },
     update: {},
     create: { name: 'ADMIN' },
   });
-  
+
   const barberRole = await prisma.role.upsert({
     where: { name: 'BARBER' },
     update: {},
     create: { name: 'BARBER' },
   });
 
-  // 2. Crear el Usuario Dueño (Admin)
-  const ownerUser = await prisma.user.upsert({
-    where: { email: 'admin@peluqueria.com' },
-    update: {},
-    create: {
-      roleId: adminRole.id,
-      name: 'Santiago (Dueño)',
-      email: 'admin@peluqueria.com',
-      passwordHash: 'hashed_password_123', // Después le meteremos bcrypt
-      active: true,
-    },
-  });
+  const legacySantis = await prisma.barber.findMany({ where: { displayName: 'Santi' }, select: { id: true, userId: true } });
+  for (const legacy of legacySantis) {
+    await prisma.$transaction([
+      prisma.barber.update({ where: { id: legacy.id }, data: { active: false } }),
+      prisma.user.update({ where: { id: legacy.userId }, data: { active: false } }),
+    ], { maxWait: 10000, timeout: 20000 });
+  }
 
-  // 3. Crear el perfil de Peluquero para el dueño
+  const ownerUser = await prisma.user.findFirst({
+    where: { OR: [{ username: 'marcosmayo23' }, { email: 'mayomarcosfabian@gmail.com' }, { email: 'admin@peluqueria.com' }] },
+  }).then((existing) => existing
+    ? prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          name: 'Marcos Mayo',
+          username: 'marcosmayo23',
+          email: 'mayomarcosfabian@gmail.com',
+          roleId: adminRole.id,
+          active: true,
+        },
+      })
+    : prisma.user.create({
+        data: {
+          roleId: adminRole.id,
+          name: 'Marcos Mayo',
+          username: 'marcosmayo23',
+          email: 'mayomarcosfabian@gmail.com',
+          passwordHash: 'hashed_password_123',
+          active: true,
+        },
+      }));
+
   await prisma.barber.upsert({
     where: { userId: ownerUser.id },
-    update: {},
+    update: { displayName: 'Marcos Mayo', commissionRate: 100, active: true },
+    create: { userId: ownerUser.id, displayName: 'Marcos Mayo', commissionRate: 100, active: true },
+  });
+
+  await prisma.service.upsert({
+    where: { id: 1 },
+    update: { imageUrl: 'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?auto=format&fit=crop&w=800&q=80' },
     create: {
-      userId: ownerUser.id,
-      displayName: 'Santi',
-      active: true,
+      name: 'Corte Clásico',
+      description: 'Corte tradicional a tijera o máquina',
+      price: 6000,
+      durationMinutes: 30,
+      imageUrl: 'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?auto=format&fit=crop&w=800&q=80',
+    },
+  });
+  await prisma.service.upsert({
+    where: { id: 2 },
+    update: { imageUrl: 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=800&q=80' },
+    create: {
+      name: 'Corte + Barba',
+      description: 'Corte con perfilado de barba',
+      price: 8000,
+      durationMinutes: 45,
+      imageUrl: 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=800&q=80',
+    },
+  });
+  await prisma.service.upsert({
+    where: { id: 3 },
+    update: { imageUrl: 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&w=800&q=80' },
+    create: {
+      name: 'Corte niño',
+      description: 'Corte infantil',
+      price: 5000,
+      durationMinutes: 30,
+      imageUrl: 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&w=800&q=80',
     },
   });
 
-  // 4. Crear Servicios (Cortes)
-  await prisma.service.createMany({
-    data: [
-      { name: 'Corte Clásico', description: 'Corte tradicional a tijera o máquina', price: 6000, durationMinutes: 30 },
-      { name: 'Corte + Barba', description: 'Corte con perfilado de barba', price: 8000, durationMinutes: 45 },
-    ],
-    skipDuplicates: true,
+  await prisma.productCategory.findFirst().then(async (category) => {
+    if (!category) await prisma.productCategory.create({ data: { name: 'Bebidas' } });
   });
 
-  // 5. Crear Categoría y Producto (Bebidas)
-  const category = await prisma.productCategory.create({
-    data: { name: 'Bebidas' },
-  });
-
-  await prisma.product.create({
-    data: {
-      categoryId: category.id,
-      name: 'Cerveza Corona',
-      price: 2500,
-      costPrice: 1200,
-      stock: 24,
-      minStock: 6,
-    },
-  });
-
-  console.log('¡Datos de prueba cargados con éxito!');
+  console.log('¡Datos cargados sin crear el peluquero Santi!');
 }
 
 main()
@@ -74,6 +100,4 @@ main()
     console.error(e);
     process.exit(1);
   })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+  .finally(async () => prisma.$disconnect());
